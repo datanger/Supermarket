@@ -17,7 +17,7 @@ localFile = fullfile(sd,"nnet",localFileDir{:},fileName);
 if exist(localFile,'file')~=2
     disp("Downloading "+fileName+" to: "+localFile);
 end
-fileURL = strjoin([localFileDir,fileName],"/");
+fileURL = strjoin([localFileDir,filePath],"/");
 filePath = matlab.internal.examples.downloadSupportFile("nnet",fileURL);
 end
 
