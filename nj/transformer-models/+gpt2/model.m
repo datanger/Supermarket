@@ -72,7 +72,7 @@ for i = 1:hyperparameters.NumLayers
     layerName = ['h' num2str(i-1)];
     [h, present] = gpt2.layer.block( h, pasts{i}, weights.(layerName), ...
         hyperparameters );
-    presents{i} = present;
+    presents{i+1} = present;
 end
 
 h = transformer.layer.normalization( h, ...
