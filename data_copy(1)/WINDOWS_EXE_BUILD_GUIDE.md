@@ -2,12 +2,13 @@
 
 ## 📋 概述
 
-本指南提供了四种不同级别的Windows EXE打包方案，专门针对**减小文件大小**和**确保兼容性**进行优化：
+本指南提供了五种不同级别的Windows EXE打包方案，专门针对**减小文件大小**和**确保兼容性**进行优化：
 
 1. **安全版本** - `build_windows_exe_safe.py` ⭐ **推荐（避免模块缺失）**
-2. **标准版本** - `build_windows_exe.py`
-3. **优化版本** - `build_windows_exe_optimized.py` 
-4. **极致版本** - `build_windows_exe_minimal.py`
+2. **纯PyInstaller版本** - `build_windows_exe_pyinstaller_only.py` 🆕 **推荐（不使用UPX）**
+3. **标准版本** - `build_windows_exe.py`
+4. **优化版本** - `build_windows_exe_optimized.py` 
+5. **极致版本** - `build_windows_exe_minimal.py`
 
 ## 🎯 目标
 
@@ -73,7 +74,20 @@ python build_windows_exe_safe.py
 - 目标文件大小: < 20MB
 - **最适合解决urllib缺失问题**
 
-### 方案2: 极致优化版本
+### 方案2: 纯PyInstaller版本 (推荐，不使用UPX)
+```bash
+python build_windows_exe_pyinstaller_only.py
+```
+
+**特点:**
+- 不使用UPX，专注PyInstaller自身优化
+- 启用strip优化
+- 禁用归档功能
+- 排除大型不需要的库
+- 目标文件大小: < 15MB
+- **最适合不需要UPX的用户**
+
+### 方案3: 极致优化版本
 ```bash
 python build_windows_exe_minimal.py
 ```
@@ -85,7 +99,7 @@ python build_windows_exe_minimal.py
 - 目标文件大小: < 10MB
 - **注意：可能遇到模块缺失问题**
 
-### 方案3: 优化版本
+### 方案4: 优化版本
 ```bash
 python build_windows_exe_optimized.py
 ```
@@ -95,7 +109,7 @@ python build_windows_exe_optimized.py
 - 启用UPX压缩
 - 目标文件大小: < 15MB
 
-### 方案4: 标准版本
+### 方案5: 标准版本
 ```bash
 python build_windows_exe.py
 ```
@@ -106,19 +120,21 @@ python build_windows_exe.py
 
 ## 📁 输出目录
 
-- **安全版本**: `dist_safe/` ⭐ **推荐**
+- **安全版本**: `dist_safe/` ⭐ **推荐（避免模块缺失）**
+- **纯PyInstaller版本**: `dist_pyinstaller_only/` 🆕 **推荐（不使用UPX）**
 - **极致版本**: `dist_minimal/`
 - **优化版本**: `dist_optimized/`
 - **标准版本**: `dist/`
 
 ## 💾 文件大小对比
 
-| 版本 | 预期大小 | 优化级别 | 兼容性 | 推荐度 |
-|------|----------|----------|--------|--------|
-| 安全版本 | < 20MB | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | 🥇 |
-| 极致版本 | < 10MB | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | 🥈 |
-| 优化版本 | < 15MB | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | 🥉 |
-| 标准版本 | < 25MB | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | 🥉 |
+| 版本 | 预期大小 | 优化级别 | 兼容性 | UPX使用 | 推荐度 |
+|------|----------|----------|--------|----------|--------|
+| 安全版本 | < 20MB | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ | 🥇 |
+| **纯PyInstaller版本** | < 15MB | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ❌ | 🥇 |
+| 极致版本 | < 10MB | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ✅ | 🥈 |
+| 优化版本 | < 15MB | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ✅ | 🥉 |
+| 标准版本 | < 25MB | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ✅ | 🥉 |
 
 ## 🔍 优化技术详解
 
@@ -177,6 +193,19 @@ python build_windows_exe_safe.py
 - 极致版本排除了太多模块
 - 某些隐式依赖被意外排除
 - 安全版本保留了必要的系统模块
+
+### 问题5: 不想使用UPX压缩工具
+**解决方案:**
+```bash
+# 使用纯PyInstaller版本打包脚本
+python build_windows_exe_pyinstaller_only.py
+```
+
+**特点:**
+- 不使用UPX，专注PyInstaller自身优化
+- 启用strip优化，禁用归档功能
+- 目标文件大小: < 15MB
+- 适合不想安装额外压缩工具的用户
 
 ## 📊 性能测试
 
