@@ -42,6 +42,7 @@ block_cipher = None
 datas = [
     ('config.ini', '.'),
     ('README.md', '.'),
+    ('data_copy_modules', 'data_copy_modules'),  # 添加整个模块目录
 ]
 
 # 安全的隐藏导入 - 包含可能需要的模块
@@ -126,15 +127,17 @@ hiddenimports = [
     'importlib.util.set_package',
     'importlib.util.set_loader',
     'importlib.util.resolve_name',
-    'importlib.util.find_spec',
-    'importlib.util.spec_from_file_location',
-    'importlib.util.module_from_spec',
-    'importlib.util.spec_from_loader',
-    'importlib.util.LazyLoader',
-    'importlib.util.module_for_loader',
-    'importlib.util.set_package',
-    'importlib.util.set_loader',
-    'importlib.util.resolve_name',
+    # 添加项目特定的模块
+    'interactive_main',
+    'data_copy_modules.interactive_main',
+    'data_copy_modules.core.system_detector',
+    'data_copy_modules.drivers.drive_detector',
+    'data_copy_modules.drivers.bitlocker_manager',
+    'data_copy_modules.data_copy.qdrive_data_handler',
+    'data_copy_modules.data_copy.vector_data_handler',
+    'data_copy_modules.utils.file_utils',
+    'data_copy_modules.utils.progress_bar',
+    'data_copy_modules.logging_utils.copy_logger',
 ]
 
 # 安全的排除列表 - 只排除确定不需要的大型库
@@ -187,8 +190,8 @@ excludes = [
 ]
 
 a = Analysis(
-    ['run_interactive.py'],
-    pathex=[],
+    ['run_interactive.py'],  # 使用正确的入口文件
+    pathex=[os.getcwd()],   # 添加当前工作目录到路径
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
