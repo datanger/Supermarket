@@ -12,13 +12,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Tuple
 
 # 导入子模块
-from data_copy_modules.drivers.drive_detector import DriveDetector
-from data_copy_modules.drivers.bitlocker_manager import BitlockerManager
-from data_copy_modules.data_copy.vector_data_handler import VectorDataHandler
-from data_copy_modules.data_copy.qdrive_data_handler import QdriveDataHandler
-from data_copy_modules.utils.file_utils import get_directory_stats, format_size, generate_directory_tree, copy_directory_with_rename
-from data_copy_modules.utils.progress_bar import create_progress_bar, update_progress, close_progress
-from data_copy_modules.logging_utils.copy_logger import log_copy_operation
+from drivers.drive_detector import DriveDetector
+from drivers.bitlocker_manager import BitlockerManager
+from data_copy.vector_data_handler import VectorDataHandler
+from data_copy.qdrive_data_handler import QdriveDataHandler
+from utils.file_utils import get_directory_stats, format_size, generate_directory_tree, copy_directory_with_rename
+from utils.progress_bar import create_progress_bar, update_progress, close_progress
+from logging_utils.copy_logger import log_copy_operation
 
 logger = logging.getLogger(__name__)
 

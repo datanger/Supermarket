@@ -8,19 +8,19 @@ Interactive Data Copy Tool Main Program
 import os
 import logging
 from typing import List, Dict, Tuple
-from data_copy_modules.core.system_detector import SystemDetector
-from data_copy_modules.data_copy.qdrive_data_handler import QdriveDataHandler
-from data_copy_modules.logging_utils.copy_logger import setup_logging
+from core.system_detector import CrossPlatformSystemDetector
+from data_copy.qdrive_data_handler import QdriveDataHandler
+from logging_utils.copy_logger import setup_copy_logger
 
 # 配置日志
-logger = setup_logging()
+logger = setup_copy_logger()
 
 class InteractiveDataCopyTool:
     """交互式数据拷贝工具类"""
     
     def __init__(self):
         """初始化工具"""
-        self.detector = SystemDetector()
+        self.detector = CrossPlatformSystemDetector()
         self.qdrive_drives = []  # 用户选择的Qdrive盘
         self.vector_drive = None  # 用户选择的Vector盘
         self.transfer_drive = None  # 用户选择的transfer盘
