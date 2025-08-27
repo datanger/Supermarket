@@ -1,0 +1,15 @@
+# 跨平台系统检测与数据拷贝工具依赖包
+# Cross-Platform System Detection and Data Copy Tool Dependencies
+
+# 系统监控和进程管理
+psutil>=5.8.0
+
+# 进度条显示（可选，但推荐）
+tqdm>=4.64.0
+
+# Windows系统特定功能（仅Windows系统需要）
+# pywin32>=305; sys_platform == "win32"
+
+# 其他标准库（Python内置，无需安装）
+# os, sys, platform, subprocess, re, shutil, datetime
+# threading, time, concurrent.futures, typing, logging 
