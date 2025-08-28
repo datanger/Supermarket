@@ -28,7 +28,7 @@ class InteractiveDataCopyTool:
         self.copy_plan = {}  # 拷贝计划
         
     def show_all_drives(self) -> List[str]:
-        """显示所有外接盘列表"""
+        """显示所有外接盘列表 - 优化版本，避免重复扫描"""
         print("\n" + "="*60)
         print("检测到的所有外接盘:")
         print("="*60)
@@ -46,24 +46,27 @@ class InteractiveDataCopyTool:
             print("❌ 未检测到外接盘")
             return []
         
+        # 一次性获取所有驱动器信息，避免重复调用
+        drive_info = self.detector.get_drive_information()
+        
         # 显示驱动器信息
         for i, drive in enumerate(external_drives, 1):
             try:
-                drive_info = self.detector.get_drive_information().get(drive, {})
-                if 'error' not in drive_info:
-                    total_gb = drive_info.get('total', 0) / (1024**3)
-                    free_gb = drive_info.get('free', 0) / (1024**3)
-                    volume_name = drive_info.get('volume_name', 'Unknown')
+                info = drive_info.get(drive, {})
+                if 'error' not in info:
+                    total_gb = info.get('total', 0) / (1024**3)
+                    free_gb = info.get('free', 0) / (1024**3)
+                    volume_name = info.get('volume_name', 'Unknown')
                     print(f"{i:2d}. {drive} - {volume_name} - 总容量: {total_gb:.2f}GB - 可用: {free_gb:.2f}GB")
                 else:
-                    print(f"{i:2d}. {drive} - 错误: {drive_info['error']}")
+                    print(f"{i:2d}. {drive} - 错误: {info['error']}")
             except Exception as e:
                 print(f"{i:2d}. {drive} - 无法获取信息: {e}")
         
         return external_drives
     
     def select_qdrive_drives(self, external_drives: List[str]) -> List[str]:
-        """人工选择Qdrive盘（201，203，230，231）"""
+        """人工选择Qdrive盘（201，203，230，231）- 优化版本，避免重复扫描"""
         print("\n" + "="*60)
         print("请选择Qdrive数据盘（201，203，230，231）:")
         print("="*60)
@@ -72,23 +75,26 @@ class InteractiveDataCopyTool:
         selected_drives = []
         expected_numbers = ['201', '203', '230', '231']
         
+        # 一次性获取驱动器信息，避免重复调用
+        drive_info = self.detector.get_drive_information()
+        
         while len(selected_drives) < 4:
             print(f"\n当前已选择: {selected_drives}")
             print(f"还需要选择: {[num for num in expected_numbers if not any(num in drive for drive in selected_drives)]}")
             
-            # 显示可用的盘符列表
+            # 显示可用的盘符列表（使用已获取的信息）
             print("\n可用的盘符列表:")
             available_drives = [drive for drive in external_drives if drive not in selected_drives]
             for i, drive in enumerate(available_drives, 1):
                 try:
-                    drive_info = self.detector.get_drive_information().get(drive, {})
-                    if 'error' not in drive_info:
-                        total_gb = drive_info.get('total', 0) / (1024**3)
-                        free_gb = drive_info.get('free', 0) / (1024**3)
-                        volume_name = drive_info.get('volume_name', 'Unknown')
+                    info = drive_info.get(drive, {})
+                    if 'error' not in info:
+                        total_gb = info.get('total', 0) / (1024**3)
+                        free_gb = info.get('free', 0) / (1024**3)
+                        volume_name = info.get('volume_name', 'Unknown')
                         print(f"  {i:2d}. {drive} - {volume_name} - 总容量: {total_gb:.2f}GB - 可用: {free_gb:.2f}GB")
                     else:
-                        print(f"  {i:2d}. {drive} - 错误: {drive_info['error']}")
+                        print(f"  {i:2d}. {drive} - 错误: {info['error']}")
                 except Exception as e:
                     print(f"  {i:2d}. {drive} - 无法获取信息: {e}")
             
@@ -119,28 +125,50 @@ class InteractiveDataCopyTool:
                     print(f"❌ 无效选择: {choice}，请输入数字编号或正确的盘符")
                     continue
             
-            # 验证选择
+            # 验证选择（快速验证，不深入扫描）
             if selected_drive:
-                # 检查是否包含data文件夹
-                data_path = os.path.join(selected_drive, 'data')
-                if os.path.exists(data_path):
-                    # 检查是否包含预期的盘号
-                    has_expected_number = any(num in selected_drive for num in expected_numbers)
-                    if has_expected_number:
+                # 快速检查是否包含data文件夹或卷标包含预期数字
+                try:
+                    # 方法1: 检查卷标是否包含预期数字
+                    volume_name = drive_info.get(selected_drive, {}).get('volume_name', '').lower()
+                    has_expected_number = any(num in volume_name for num in expected_numbers)
+                    
+                    # 方法2: 快速检查根目录下的data文件夹（不深入扫描）
+                    has_data_folder = False
+                    try:
+                        if os.access(selected_drive, os.R_OK):
+                            entries = os.listdir(selected_drive)
+                            has_data_folder = 'data' in entries
+                    except (PermissionError, OSError):
+                        # 权限错误，可能是加密盘，通过卷标判断
+                        pass
+                    
+                    if has_expected_number or has_data_folder:
                         if selected_drive not in selected_drives:
                             selected_drives.append(selected_drive)
                             print(f"✅ 已选择Qdrive盘: {selected_drive}")
                         else:
-                            print("❌ 该盘已被选择")
+                            print(f"⚠️ 该盘已被选择: {selected_drive}")
                     else:
-                        print(f"⚠️ 警告：{selected_drive} 不包含预期的盘号(201/203/230/231)")
-                        confirm = input("是否仍要选择此盘？(y/n): ").lower().strip()
+                        print(f"⚠️ 警告: {selected_drive} 可能不是Qdrive数据盘")
+                        confirm = input("是否仍然选择该盘？(y/n): ").lower().strip()
                         if confirm == 'y':
                             if selected_drive not in selected_drives:
                                 selected_drives.append(selected_drive)
                                 print(f"✅ 已选择Qdrive盘: {selected_drive}")
-                else:
-                    print(f"❌ {selected_drive} 中未找到data文件夹，请重新选择")
+                            else:
+                                print(f"⚠️ 该盘已被选择: {selected_drive}")
+                        else:
+                            print(f"已取消选择: {selected_drive}")
+                            
+                except Exception as e:
+                    print(f"验证驱动器时出错: {e}")
+                    # 如果验证失败，仍然允许选择
+                    if selected_drive not in selected_drives:
+                        selected_drives.append(selected_drive)
+                        print(f"✅ 已选择Qdrive盘: {selected_drive} (验证跳过)")
+                    else:
+                        print(f"⚠️ 该盘已被选择: {selected_drive}")
         
         self.qdrive_drives = selected_drives
         print(f"\n✅ Qdrive盘选择完成: {selected_drives}")

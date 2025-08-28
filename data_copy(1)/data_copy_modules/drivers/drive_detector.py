@@ -47,7 +47,7 @@ class DriveDetector:
     
     def detect_all_drives(self) -> List[str]:
         """
-        检测系统中所有可用的驱动器
+        检测系统中所有可用的驱动器 - 优化版本，不扫描内容
         
         Returns:
             List[str]: 驱动器路径列表
@@ -56,14 +56,14 @@ class DriveDetector:
             drives = []
             
             if self.os_type == "windows":
-                # Windows系统：检测盘符
+                # Windows系统：检测盘符，使用更安全的方法
                 for partition in psutil.disk_partitions():
-                    if partition.device and os.path.exists(partition.device):
+                    if partition.device and self._is_drive_accessible(partition.device):
                         drives.append(partition.device)
             else:
                 # Linux/macOS系统：检测挂载点
                 for partition in psutil.disk_partitions():
-                    if partition.mountpoint and os.path.exists(partition.mountpoint):
+                    if partition.mountpoint and self._is_drive_accessible(partition.mountpoint):
                         drives.append(partition.mountpoint)
             
             self.drives = drives
@@ -73,6 +73,36 @@ class DriveDetector:
         except Exception as e:
             logger.error(f"检测驱动器时出错: {e}")
             return []
+    
+    def _is_drive_accessible(self, drive_path: str) -> bool:
+        """
+        检查驱动器是否可访问 - 避免权限错误
+        
+        Args:
+            drive_path: 驱动器路径
+            
+        Returns:
+            bool: 是否可访问
+        """
+        try:
+            # 只检查路径是否存在，不尝试访问内容
+            if not os.path.exists(drive_path):
+                return False
+            
+            # 尝试获取基本信息，不扫描内容
+            if self.os_type == "windows":
+                # Windows: 只检查盘符是否可访问
+                return True
+            else:
+                # Linux/macOS: 检查挂载点是否可访问
+                return os.access(drive_path, os.R_OK)
+                
+        except (PermissionError, OSError):
+            # 权限错误或系统错误，记录但不中断
+            logger.debug(f"驱动器 {drive_path} 访问受限，但继续检测")
+            return True  # 仍然返回True，让后续处理决定
+        except Exception:
+            return False
     
     def get_system_drives(self) -> List[str]:
         """
@@ -133,19 +163,21 @@ class DriveDetector:
         return system_drives
     
     def _is_windows_system_drive(self, drive: str) -> bool:
-        """判断Windows驱动器是否为系统相关驱动器"""
+        """判断Windows驱动器是否为系统相关驱动器 - 优化版本，不扫描内容"""
         try:
-            # 检查是否包含系统文件夹
-            system_folders = ['Windows', 'Program Files', 'Program Files (x86)', 'Users', 'ProgramData']
-            for folder in system_folders:
-                if os.path.exists(os.path.join(drive, folder)):
-                    return True
+            # 只检查常见的系统盘符，不扫描内容
+            system_drive_letters = ['C:', 'D:', 'E:']  # 常见的系统盘符
             
-            # 检查是否为EFI分区
+            # 检查盘符
+            drive_letter = drive.rstrip('\\').upper()
+            if drive_letter in system_drive_letters:
+                return True
+            
+            # 检查是否为EFI分区（通过卷标判断，不扫描内容）
             if self._is_efi_partition(drive):
                 return True
                 
-            # 检查是否为恢复分区
+            # 检查是否为恢复分区（通过卷标判断，不扫描内容）
             if self._is_recovery_partition(drive):
                 return True
                 
@@ -218,7 +250,7 @@ class DriveDetector:
     
     def _is_source_drive(self, drive: str) -> bool:
         """
-        判断驱动器是否为源数据驱动器
+        判断驱动器是否为源数据驱动器 - 优化版本，不扫描内容
         
         Args:
             drive: 驱动器路径
@@ -227,22 +259,29 @@ class DriveDetector:
             bool: 是否为源数据驱动器
         """
         try:
-            # 检查是否包含数据文件夹
-            data_folders = ['data', 'record', 'logs', 'backup', 'archive', 'source', 'raw']
-            for folder in data_folders:
-                if os.path.exists(os.path.join(drive, folder)):
-                    return True
+            # 只检查根目录，不深入扫描
+            if not os.access(drive, os.R_OK):
+                return False
             
-            # 检查是否包含特定文件类型
-            data_files = ['.txt', '.log', '.csv', '.json', '.xml', '.dat', '.bin']
+            # 快速检查根目录下的文件夹
             try:
-                for root, dirs, files in os.walk(drive, topdown=True):
-                    for file in files:
-                        if any(file.endswith(ext) for ext in data_files):
-                            return True
-                    break  # 只检查第一层目录
-            except PermissionError:
-                pass  # 忽略权限错误
+                entries = os.listdir(drive)
+                # 检查是否包含数据相关文件夹
+                data_folders = ['data', 'record', 'logs', 'backup', 'archive', 'source', 'raw']
+                for folder in data_folders:
+                    if folder in entries:
+                        return True
+                
+                # 检查卷标是否包含数据相关关键词
+                volume_name = self._get_volume_name(drive).lower()
+                data_keywords = ['data', 'record', 'log', 'source', 'raw', '201', '203', '230', '231']
+                if any(keyword in volume_name for keyword in data_keywords):
+                    return True
+                    
+            except (PermissionError, OSError):
+                # 权限错误，可能是加密盘，默认作为源盘
+                logger.debug(f"驱动器 {drive} 访问受限，可能是加密盘，标记为源盘")
+                return True
                 
         except Exception:
             pass
@@ -251,7 +290,7 @@ class DriveDetector:
     
     def _is_destination_drive(self, drive: str) -> bool:
         """
-        判断驱动器是否为目标备份驱动器
+        判断驱动器是否为目标备份驱动器 - 优化版本，不扫描内容
         
         Args:
             drive: 驱动器路径
@@ -260,15 +299,15 @@ class DriveDetector:
             bool: 是否为目标备份驱动器
         """
         try:
-            # 检查是否为几乎空的驱动器
-            if self._is_disk_almost_empty(drive):
+            # 检查卷标是否包含备份相关关键词
+            volume_name = self._get_volume_name(drive).lower()
+            backup_keywords = ['backup', 'archive', 'copy', 'mirror', 'destination', 'target', 'temp', 'transfer']
+            if any(keyword in volume_name for keyword in backup_keywords):
                 return True
             
-            # 检查是否包含备份相关文件夹
-            backup_folders = ['backup', 'archive', 'copy', 'mirror', 'destination', 'target', 'temp']
-            for folder in backup_folders:
-                if os.path.exists(os.path.join(drive, folder)):
-                    return True
+            # 检查是否为几乎空的驱动器（快速检查）
+            if self._is_disk_almost_empty(drive):
+                return True
                     
         except Exception:
             pass
@@ -277,7 +316,7 @@ class DriveDetector:
     
     def _is_disk_almost_empty(self, drive: str) -> bool:
         """
-        判断驱动器是否几乎为空
+        判断驱动器是否几乎为空 - 优化版本，不深入扫描
         
         Args:
             drive: 驱动器路径
@@ -286,6 +325,9 @@ class DriveDetector:
             bool: 是否几乎为空
         """
         try:
+            if not os.access(drive, os.R_OK):
+                return False
+            
             # 根据操作系统定义要排除的文件夹
             if self.os_type == "windows":
                 excluded_folders = ['$RECYCLE.BIN', 'System Volume Information', 'found.000']
@@ -296,21 +338,26 @@ class DriveDetector:
             else:
                 excluded_folders = []
             
-            entries = os.listdir(drive)
-            # 过滤掉排除的文件夹
-            filtered_entries = [entry for entry in entries 
-                              if entry not in excluded_folders 
-                              and not entry.startswith('.')]
-            
-            # 如果过滤后的条目数量很少，认为磁盘几乎为空
-            return len(filtered_entries) <= 2
-            
+            try:
+                entries = os.listdir(drive)
+                # 过滤掉排除的文件夹
+                filtered_entries = [entry for entry in entries 
+                                  if entry not in excluded_folders 
+                                  and not entry.startswith('.')]
+                
+                # 如果过滤后的条目数量很少，认为磁盘几乎为空
+                return len(filtered_entries) <= 2
+                
+            except (PermissionError, OSError):
+                # 权限错误，可能是加密盘，默认作为目标盘
+                return True
+                
         except Exception:
             return False
     
     def get_drive_information(self) -> Dict[str, Dict]:
         """
-        获取所有驱动器的详细信息
+        获取所有驱动器的基本信息 - 优化版本，不扫描内容
         
         Returns:
             Dict[str, Dict]: 驱动器信息字典
@@ -319,8 +366,15 @@ class DriveDetector:
         
         for drive in self.drives:
             try:
-                # 获取磁盘使用情况
-                usage = psutil.disk_usage(drive)
+                # 获取磁盘使用情况（如果可访问）
+                try:
+                    usage = psutil.disk_usage(drive)
+                    total = usage.total
+                    used = usage.used
+                    free = usage.free
+                except (PermissionError, OSError):
+                    # 权限错误，可能是加密盘，使用默认值
+                    total = used = free = 0
                 
                 # 获取文件系统信息
                 fs_type = "Unknown"
@@ -333,13 +387,13 @@ class DriveDetector:
                 except:
                     fs_type = "Unknown"
                 
-                # 获取卷标信息
+                # 获取卷标信息（快速获取）
                 volume_name = self._get_volume_name(drive)
                 
                 drive_info[drive] = {
-                    'total': usage.total,
-                    'used': usage.used,
-                    'free': usage.free,
+                    'total': total,
+                    'used': used,
+                    'free': free,
                     'volume_name': volume_name,
                     'fs_type': fs_type,
                     'is_system': drive in self.system_drives,
@@ -355,15 +409,18 @@ class DriveDetector:
         return drive_info
     
     def _get_volume_name(self, drive: str) -> str:
-        """获取驱动器卷标"""
+        """获取驱动器卷标 - 优化版本，不扫描内容"""
         try:
             if self.os_type == "windows":
-                # Windows系统：尝试获取卷标
+                # Windows系统：尝试获取卷标，但不扫描内容
                 try:
                     import win32api
                     volume_name = win32api.GetVolumeInformation(drive)[0]
                     return volume_name if volume_name else os.path.basename(drive) or drive
                 except ImportError:
+                    return os.path.basename(drive) or drive
+                except (PermissionError, OSError):
+                    # 权限错误，可能是加密盘
                     return os.path.basename(drive) or drive
             else:
                 # Linux/macOS系统：使用路径名
