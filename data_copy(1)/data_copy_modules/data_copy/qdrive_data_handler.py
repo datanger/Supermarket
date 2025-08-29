@@ -54,96 +54,114 @@ class QdriveDataHandler:
             bool: 创建是否成功
         """
         try:
-            # 获取当前日期
-            current_date = datetime.datetime.now().strftime("%Y%m%d")
-            
             if not qdrive_drives:
                 logger.error("没有可用的Qdrive数据盘")
                 return False
             
-            # 收集所有车型信息
+            # 从Qdrive数据中提取车型和日期信息
             all_vehicle_models = set()
+            all_dates = set()
+            
+            # 静默分析Qdrive数据结构
             for qdrive_drive in qdrive_drives:
                 data_path = os.path.join(qdrive_drive, 'data')
+                
                 if os.path.exists(data_path):
-                    for item in os.listdir(data_path):
-                        item_path = os.path.join(data_path, item)
-                        if os.path.isdir(item_path):
-                            vehicle_model = self.extract_vehicle_model(item)
-                            if vehicle_model:
+                    try:
+                        # 遍历二级目录（车型目录）
+                        vehicle_dirs = os.listdir(data_path)
+                        
+                        for vehicle_dir in vehicle_dirs:
+                            vehicle_path = os.path.join(data_path, vehicle_dir)
+                            
+                            if os.path.isdir(vehicle_path):
+                                # 提取车型：从2qd_3NRV1_v1中提取RV1
+                                vehicle_model = vehicle_dir
+                                # 使用正则表达式提取RV1部分
+                                rv_match = re.search(r'3N([A-Z]+\d+)', vehicle_dir)
+                                if rv_match:
+                                    vehicle_model = rv_match.group(1)  # 提取RV1
+                                else:
+                                    # 如果没有匹配到3N+字母数字的模式，尝试其他方式
+                                    if 'RV1' in vehicle_dir:
+                                        vehicle_model = 'RV1'
+                                    else:
+                                        continue
+                                
                                 all_vehicle_models.add(vehicle_model)
+                                
+                                try:
+                                    # 遍历三级目录（日期目录）
+                                    date_dirs = os.listdir(vehicle_path)
+                                    
+                                    for date_dir in date_dirs:
+                                        date_path = os.path.join(vehicle_path, date_dir)
+                                        
+                                        if os.path.isdir(date_path):
+                                            # 从2025_08_21-10_19中提取20250821
+                                            date_match = re.search(r'(\d{4})_(\d{2})_(\d{2})', date_dir)
+                                            if date_match:
+                                                year, month, day = date_match.groups()
+                                                extracted_date = f"{year}{month}{day}"
+                                                all_dates.add(extracted_date)
+                                except Exception as e:
+                                    logger.warning(f"读取三级目录时出错: {e}")
+                    except Exception as e:
+                        logger.warning(f"读取二级目录时出错: {e}")
             
             if not all_vehicle_models:
                 logger.error("无法从Qdrive数据中获取车型信息")
                 return False
             
-            # 显示检测到的所有车型
-            print(f"\n检测到车型: {', '.join(sorted(all_vehicle_models))}")
+            if not all_dates:
+                logger.error("无法从Qdrive数据中获取日期信息")
+                print("\n尝试使用当前系统日期作为备选方案...")
+                current_date = datetime.datetime.now().strftime("%Y%m%d")
+                all_dates.add(current_date)
+                print(f"使用当前系统日期: {current_date}")
             
-            # 选择主要车型（用于根目录命名）
+            # 显示检测到的信息
+            print(f"\n检测到车型: {', '.join(sorted(all_vehicle_models))}")
+            print(f"检测到日期: {', '.join(sorted(all_dates))}")
+            
+            # 自动选择主要车型和日期（用于根目录命名）
             if len(all_vehicle_models) == 1:
                 main_vehicle_model = list(all_vehicle_models)[0]
             else:
-                print("检测到多个车型，请选择主要车型用于根目录命名:")
-                for i, model in enumerate(sorted(all_vehicle_models), 1):
-                    print(f"  {i}. {model}")
-                
-                while True:
-                    try:
-                        choice = int(input("请选择车型编号: ").strip())
-                        if 1 <= choice <= len(all_vehicle_models):
-                            main_vehicle_model = sorted(all_vehicle_models)[choice - 1]
-                            break
-                        else:
-                            print(f"请输入1到{len(all_vehicle_models)}之间的数字")
-                    except ValueError:
-                        print("请输入有效的数字")
+                # 自动选择第一个车型
+                main_vehicle_model = sorted(all_vehicle_models)[0]
             
-            # 创建根目录：日期-主要车型
-            root_dir_name = f"{current_date}-{main_vehicle_model}"
+            if len(all_dates) == 1:
+                main_date = list(all_dates)[0]
+            else:
+                # 自动选择第一个日期
+                main_date = sorted(all_dates)[0]
+            
+            # 创建根目录：日期-车型
+            root_dir_name = f"{main_date}-{main_vehicle_model}"
             root_dir_path = os.path.join(backup_drive, root_dir_name)
             
-            print(f"建议的根目录名称: {root_dir_name}")
+            # 直接使用建议的根目录名称
+            print(f"使用根目录名称: {root_dir_name}")
             
-            # 人工确认根目录名称
-            custom_name = input("请输入根目录名称（直接回车使用建议名称）: ").strip()
-            if custom_name:
-                root_dir_name = custom_name
-                root_dir_path = os.path.join(backup_drive, root_dir_name)
-            
-            # 人工确认A盘或B盘
+            # 用户选择A盘或B盘
             while True:
                 disk_choice = input("请选择A盘或B盘 (A/B): ").strip().upper()
                 if disk_choice in ['A', 'B']:
                     break
                 else:
-                    print("请输入A或B")
+                    print("❌ 无效选择，请输入 A 或 B")
             
             # 创建根目录
             os.makedirs(root_dir_path, exist_ok=True)
             
             # 根据选择的Qdrive盘号创建对应的二级目录
-            # 从qdrive_drives中提取盘号信息
-            drive_numbers = []
-            for qdrive_drive in qdrive_drives:
-                # 从路径中提取盘号（假设路径格式为 /path/to/drive_201 或 /path/to/201）
-                drive_name = os.path.basename(qdrive_drive)
-                if drive_name.startswith('drive_'):
-                    drive_number = drive_name.replace('drive_', '')
-                else:
-                    drive_number = drive_name
-                drive_numbers.append(drive_number)
-            
-            # 如果没有提取到盘号，使用默认的201、203、230、231
-            if not drive_numbers:
-                drive_numbers = ['201', '203', '230', '231']
-                logger.warning("无法从Qdrive盘路径提取盘号，使用默认盘号")
-            
-            print(f"检测到的盘号: {', '.join(drive_numbers)}")
+            # 使用传入的qdrive_drives和预期的盘号映射
+            expected_drive_numbers = ['201', '203', '230', '231']
             
             # 为每个车型和盘号创建对应的二级目录
             for vehicle_model in sorted(all_vehicle_models):
-                for drive_number in drive_numbers:
+                for drive_number in expected_drive_numbers:
                     # 确保车型名称包含3N前缀
                     if not vehicle_model.startswith('3N'):
                         vehicle_model_with_prefix = f"3N{vehicle_model}"
@@ -157,7 +175,8 @@ class QdriveDataHandler:
             
             logger.info(f"成功在backup盘 {backup_drive} 创建目录结构")
             logger.info(f"包含车型: {', '.join(sorted(all_vehicle_models))}")
-            logger.info(f"包含盘号: {', '.join(drive_numbers)}")
+            logger.info(f"包含日期: {', '.join(sorted(all_dates))}")
+            logger.info(f"包含盘号: {', '.join(expected_drive_numbers)}")
             logger.info(f"选择的盘类型: {disk_choice}盘")
             
             # 保存AB盘选择结果，供后续拷贝使用

@@ -163,7 +163,7 @@ def copy_file_with_rename(src_file: str, dst_file: str) -> bool:
 
 def copy_directory_with_rename(src_dir: str, dst_dir: str, progress_callback=None) -> bool:
     """
-    拷贝目录，处理同名文件自动重命名
+    拷贝目录，处理同名文件自动重命名 - 增强版本
     
     Args:
         src_dir: 源目录路径
@@ -177,6 +177,17 @@ def copy_directory_with_rename(src_dir: str, dst_dir: str, progress_callback=Non
         # 创建目标目录
         os.makedirs(dst_dir, exist_ok=True)
         
+        copied_files = 0
+        failed_files = 0
+        total_files = 0
+        
+        # 首先统计总文件数
+        for root, dirs, files in os.walk(src_dir):
+            total_files += len(files)
+        
+        logger.info(f"开始拷贝目录: {src_dir} -> {dst_dir}")
+        logger.info(f"总文件数: {total_files}")
+        
         # 遍历源目录
         for root, dirs, files in os.walk(src_dir):
             # 计算相对路径
@@ -184,7 +195,11 @@ def copy_directory_with_rename(src_dir: str, dst_dir: str, progress_callback=Non
             target_dir = os.path.join(dst_dir, rel_path)
             
             # 创建子目录
-            os.makedirs(target_dir, exist_ok=True)
+            try:
+                os.makedirs(target_dir, exist_ok=True)
+            except Exception as e:
+                logger.error(f"无法创建目标目录 {target_dir}: {e}")
+                continue
             
             # 拷贝文件
             for file in files:
@@ -192,18 +207,42 @@ def copy_directory_with_rename(src_dir: str, dst_dir: str, progress_callback=Non
                 dst_file = os.path.join(target_dir, file)
                 
                 try:
+                    # 简化文件验证，只检查基本存在性
+                    if not os.path.exists(src_file):
+                        logger.debug(f"源文件不存在，跳过: {src_file}")
+                        failed_files += 1
+                        continue
+                    
                     # 使用自动重命名功能拷贝文件
                     success = copy_file_with_rename(src_file, dst_file)
-                    if success and progress_callback:
-                        progress_callback(1)
-                    elif not success:
-                        logger.warning(f"拷贝文件失败: {src_file}")
+                    if success:
+                        copied_files += 1
+                        if progress_callback:
+                            progress_callback(1)
+                        logger.debug(f"成功拷贝: {src_file} -> {dst_file}")
+                    else:
+                        failed_files += 1
+                        logger.debug(f"拷贝文件失败: {src_file}")
                         
                 except Exception as e:
-                    logger.warning(f"拷贝文件 {src_file} 时出错: {e}")
+                    failed_files += 1
+                    logger.debug(f"拷贝文件 {src_file} 时出错: {e}")
                     continue
         
-        return True
+        # 记录拷贝结果
+        logger.info(f"拷贝完成: 成功 {copied_files} 个文件, 失败 {failed_files} 个文件")
+        
+        if failed_files > 0:
+            logger.warning(f"有 {failed_files} 个文件拷贝失败")
+        
+        # 如果大部分文件都拷贝成功，认为拷贝成功
+        success_rate = copied_files / total_files if total_files > 0 else 0
+        if success_rate >= 0.7:  # 降低到70%以上成功
+            logger.info(f"拷贝成功率: {success_rate:.2%}")
+            return True
+        else:
+            logger.error(f"拷贝成功率过低: {success_rate:.2%}")
+            return False
         
     except Exception as e:
         logger.error(f"拷贝目录时出错: {e}")

@@ -8,9 +8,14 @@ Interactive Data Copy Tool Main Program
 import os
 import logging
 from typing import List, Dict, Tuple
-from core.system_detector import CrossPlatformSystemDetector
-from data_copy.qdrive_data_handler import QdriveDataHandler
-from logging_utils.copy_logger import setup_copy_logger
+try:
+    from core.system_detector import CrossPlatformSystemDetector
+    from data_copy.qdrive_data_handler import QdriveDataHandler
+    from logging_utils.copy_logger import setup_copy_logger
+except ImportError:
+    from data_copy_modules.core.system_detector import CrossPlatformSystemDetector
+    from data_copy_modules.data_copy.qdrive_data_handler import QdriveDataHandler
+    from data_copy_modules.logging_utils.copy_logger import setup_copy_logger
 
 # 配置日志
 logger = setup_copy_logger()
@@ -54,14 +59,34 @@ class InteractiveDataCopyTool:
             try:
                 info = drive_info.get(drive, {})
                 if 'error' not in info:
-                    total_gb = info.get('total', 0) / (1024**3)
-                    free_gb = info.get('free', 0) / (1024**3)
-                    volume_name = info.get('volume_name', 'Unknown')
-                    print(f"{i:2d}. {drive} - {volume_name} - 总容量: {total_gb:.2f}GB - 可用: {free_gb:.2f}GB")
+                    # 检查是否是加密驱动器
+                    if info.get('is_encrypted', False):
+                        bitlocker_status = info.get('bitlocker_status', 'Unknown')
+                        if bitlocker_status == 'Locked':
+                            print(f"{i:2d}. {drive} - 🔒 BitLocker加密驱动器 (已锁定，需要解锁)")
+                        elif bitlocker_status == 'Unlocked':
+                            print(f"{i:2d}. {drive} - 🔓 BitLocker加密驱动器 (已解锁)")
+                        else:
+                            print(f"{i:2d}. {drive} - 🔐 BitLocker加密驱动器 (状态: {bitlocker_status})")
+                    elif not info.get('is_accessible', True):
+                        print(f"{i:2d}. {drive} - ⚠️ 访问受限")
+                    else:
+                        total_gb = info.get('total', 0) / (1024**3)
+                        free_gb = info.get('free', 0) / (1024**3)
+                        volume_name = info.get('volume_name', 'Unknown')
+                        print(f"{i:2d}. {drive} - {volume_name} - 总容量: {total_gb:.2f}GB - 可用: {free_gb:.2f}GB")
                 else:
                     print(f"{i:2d}. {drive} - 错误: {info['error']}")
             except Exception as e:
-                print(f"{i:2d}. {drive} - 无法获取信息: {e}")
+                # 检查是否是加密驱动器
+                try:
+                    # 尝试访问驱动器
+                    os.listdir(drive)
+                    print(f"{i:2d}. {drive} - 状态正常")
+                except (PermissionError, OSError):
+                    print(f"{i:2d}. {drive} - 🔒 加密驱动器 (需要解锁)")
+                except Exception as e2:
+                    print(f"{i:2d}. {drive} - 无法获取信息: {e2}")
         
         return external_drives
     
@@ -78,9 +103,19 @@ class InteractiveDataCopyTool:
         # 一次性获取驱动器信息，避免重复调用
         drive_info = self.detector.get_drive_information()
         
+        # 创建盘号到驱动器的映射
+        drive_number_mapping = {}
+        
         while len(selected_drives) < 4:
+            # 计算还需要选择的盘号
+            remaining_numbers = []
+            for num in expected_numbers:
+                # 检查这个盘号是否已经被分配给某个驱动器
+                if num not in drive_number_mapping.values():
+                    remaining_numbers.append(num)
+            
             print(f"\n当前已选择: {selected_drives}")
-            print(f"还需要选择: {[num for num in expected_numbers if not any(num in drive for drive in selected_drives)]}")
+            print(f"还需要选择: {remaining_numbers}")
             
             # 显示可用的盘符列表（使用已获取的信息）
             print("\n可用的盘符列表:")
@@ -98,7 +133,12 @@ class InteractiveDataCopyTool:
                 except Exception as e:
                     print(f"  {i:2d}. {drive} - 无法获取信息: {e}")
             
-            choice = input(f"\n请选择第{len(selected_drives)+1}个Qdrive盘 (输入数字编号或输入'done'完成): ").strip()
+            # 提示用户选择哪个具体的Qdrive盘号
+            if remaining_numbers:
+                next_number = remaining_numbers[0]
+                choice = input(f"\n请选择Qdrive盘 {next_number} (输入数字编号或输入'done'完成): ").strip()
+            else:
+                choice = input(f"\n请选择Qdrive盘 (输入数字编号或输入'done'完成): ").strip()
             
             if choice.lower() == 'done':
                 if len(selected_drives) < 4:
@@ -142,11 +182,26 @@ class InteractiveDataCopyTool:
                     except (PermissionError, OSError):
                         # 权限错误，可能是加密盘，通过卷标判断
                         pass
-                    
                     if has_expected_number or has_data_folder:
                         if selected_drive not in selected_drives:
-                            selected_drives.append(selected_drive)
-                            print(f"✅ 已选择Qdrive盘: {selected_drive}")
+                            # 确定这个驱动器对应的盘号
+                            drive_number = None
+                            for num in expected_numbers:
+                                if num in volume_name.lower() or (has_data_folder and num not in [d for d in drive_number_mapping.values()]):
+                                    if num not in [d for d in drive_number_mapping.values()]:
+                                        drive_number = num
+                                        break
+                            
+                            if drive_number:
+                                drive_number_mapping[selected_drive] = drive_number
+                                selected_drives.append(selected_drive)
+                                print(f"✅ 已选择Qdrive盘 {drive_number}: {selected_drive}")
+                            else:
+                                print(f"⚠️ 无法确定 {selected_drive} 对应的盘号")
+                                confirm = input("是否仍然选择该盘？(y/n): ").lower().strip()
+                                if confirm == 'y':
+                                    selected_drives.append(selected_drive)
+                                    print(f"✅ 已选择Qdrive盘: {selected_drive}")
                         else:
                             print(f"⚠️ 该盘已被选择: {selected_drive}")
                     else:
@@ -171,7 +226,10 @@ class InteractiveDataCopyTool:
                         print(f"⚠️ 该盘已被选择: {selected_drive}")
         
         self.qdrive_drives = selected_drives
-        print(f"\n✅ Qdrive盘选择完成: {selected_drives}")
+        self.qdrive_number_mapping = drive_number_mapping  # 保存盘号映射
+        print(f"\n✅ Qdrive盘选择完成:")
+        for drive, number in drive_number_mapping.items():
+            print(f"  Qdrive盘 {number}: {drive}")
         return selected_drives
     
     def select_vector_drive(self, external_drives: List[str]) -> str:
@@ -344,23 +402,67 @@ class InteractiveDataCopyTool:
             'qdrive_to_backup': False
         }
         
-        print("可选的拷贝操作:")
-        print("1. Qdrive数据 → Transfer盘（保持原始结构）")
-        print("2. Vector数据 → Transfer盘（保持原始结构）")
-        print("3. Vector数据 → Backup盘（保持原始结构）")
-        print("4. Qdrive数据 → Backup盘（重新组织目录结构）")
+        print("📋 拷贝计划选择:")
+        print("="*60)
         
-        for operation in copy_plan.keys():
-            while True:
-                choice = input(f"\n是否执行 {operation}？(y/n): ").lower().strip()
-                if choice in ['y', 'n']:
-                    copy_plan[operation] = (choice == 'y')
-                    break
+        # 1. Transfer盘拷贝选择
+        print("🔄 Transfer盘拷贝操作:")
+        print("   将Qdrive和Vector数据拷贝到Transfer盘，保持原始目录结构")
+        while True:
+            choice = input("是否执行Transfer盘拷贝？(y/n): ").lower().strip()
+            if choice in ['y', 'n']:
+                if choice == 'y':
+                    copy_plan['qdrive_to_transfer'] = True
+                    copy_plan['vector_to_transfer'] = True
+                    print("✅ 已选择Transfer盘拷贝：Qdrive + Vector数据")
                 else:
-                    print("请输入 y 或 n")
+                    print("❌ 跳过Transfer盘拷贝")
+                break
+            else:
+                print("请输入 y 或 n")
+        
+        print()
+        
+        # 2. Backup盘拷贝选择
+        print("💾 Backup盘拷贝操作:")
+        print("   将Qdrive数据重新组织目录结构 + Vector数据保持原始结构")
+        while True:
+            choice = input("是否执行Backup盘拷贝？(y/n): ").lower().strip()
+            if choice in ['y', 'n']:
+                if choice == 'y':
+                    copy_plan['qdrive_to_backup'] = True
+                    copy_plan['vector_to_backup'] = True
+                    print("✅ 已选择Backup盘拷贝：Qdrive(重新组织) + Vector(原始结构)")
+                else:
+                    print("❌ 跳过Backup盘拷贝")
+                break
+            else:
+                print("请输入 y 或 n")
         
         self.copy_plan = copy_plan
-        print(f"\n✅ 拷贝计划已确定: {copy_plan}")
+        
+        # 显示最终拷贝计划
+        print("\n" + "="*60)
+        print("📋 最终拷贝计划:")
+        print("="*60)
+        if copy_plan['qdrive_to_transfer'] or copy_plan['vector_to_transfer']:
+            print("🔄 Transfer盘拷贝:")
+            if copy_plan['qdrive_to_transfer']:
+                print("   ✅ Qdrive数据 → Transfer盘（保持原始结构）")
+            if copy_plan['vector_to_transfer']:
+                print("   ✅ Vector数据 → Transfer盘（保持原始结构）")
+        else:
+            print("❌ Transfer盘拷贝：跳过")
+            
+        if copy_plan['qdrive_to_backup'] or copy_plan['vector_to_backup']:
+            print("💾 Backup盘拷贝:")
+            if copy_plan['qdrive_to_backup']:
+                print("   ✅ Qdrive数据 → Backup盘（重新组织目录结构）")
+            if copy_plan['vector_to_backup']:
+                print("   ✅ Vector数据 → Backup盘（保持原始结构）")
+        else:
+            print("❌ Backup盘拷贝：跳过")
+        
         return copy_plan
     
     def handle_bitlocker_unlock(self, external_drives: List[str]) -> bool:
@@ -373,63 +475,150 @@ class InteractiveDataCopyTool:
         print("BitLocker状态检查:")
         print("="*60)
         
+        # 获取驱动器信息，包括加密状态
+        drive_info = self.detector.get_drive_information()
+        
         # 检查所有外接盘
         locked_drives = []
+        encrypted_drives = []
+        
         for drive in external_drives:
             try:
-                status = self.detector.bitlocker_manager.check_bitlocker_status(drive)
-                if status == 'Locked':
-                    locked_drives.append(drive)
-                    print(f"🔒 {drive}: BitLocker已锁定")
+                info = drive_info.get(drive, {})
+                if info.get('is_encrypted', False):
+                    encrypted_drives.append(drive)
+                    bitlocker_status = info.get('bitlocker_status', 'Unknown')
+                    
+                    if bitlocker_status == 'Locked':
+                        locked_drives.append(drive)
+                        print(f"🔒 {drive}: BitLocker加密驱动器 (已锁定)")
+                    elif bitlocker_status == 'Unlocked':
+                        print(f"🔓 {drive}: BitLocker加密驱动器 (已解锁)")
+                    else:
+                        print(f"🔐 {drive}: BitLocker加密驱动器 (状态: {bitlocker_status})")
                 else:
-                    print(f"🔓 {drive}: BitLocker状态正常")
+                    # 尝试使用传统方法检查
+                    try:
+                        status = self.detector.bitlocker_manager.check_bitlocker_status(drive)
+                        if status == 'Locked':
+                            locked_drives.append(drive)
+                            print(f"🔒 {drive}: BitLocker已锁定")
+                        else:
+                            print(f"🔓 {drive}: BitLocker状态正常")
+                    except Exception as e:
+                        print(f"❓ {drive}: 无法检查BitLocker状态: {e}")
             except Exception as e:
-                print(f"❓ {drive}: 无法检查BitLocker状态: {e}")
+                print(f"❓ {drive}: 无法检查驱动器状态: {e}")
         
-        if not locked_drives:
-            print("✅ 所有外接盘BitLocker状态正常")
+        # 额外检查：如果驱动器检测器识别为加密但状态检查失败，强制标记为锁定
+        for drive in external_drives:
+            try:
+                info = drive_info.get(drive, {})
+                if info.get('is_encrypted', False) and drive not in locked_drives:
+                    # 如果驱动器被识别为加密但不在锁定列表中，强制标记为锁定
+                    if drive not in locked_drives:
+                        locked_drives.append(drive)
+                        print(f"🔒 {drive}: BitLocker加密驱动器 (强制标记为已锁定)")
+            except Exception:
+                pass
+        
+        if not encrypted_drives:
+            print("✅ 未发现BitLocker加密驱动器")
             return True
         
-        print(f"\n发现 {len(locked_drives)} 个被锁定的驱动器")
-        print("需要解锁这些驱动器才能进行数据拷贝")
+        if not locked_drives:
+            print("✅ 所有BitLocker加密驱动器都已解锁")
+            return True
+        
+        print(f"\n发现 {len(locked_drives)} 个被锁定的BitLocker加密驱动器:")
+        for drive in locked_drives:
+            print(f"  - {drive}")
+        
+        print("\n⚠️  警告：这些驱动器被BitLocker加密锁定，无法访问其内容")
+        print("您有以下选择：")
+        print("1. 解锁驱动器（需要BitLocker密码）")
+        print("2. 跳过这些驱动器，继续使用其他可用驱动器")
+        print("3. 退出程序")
         
         while True:
-            choice = input("是否现在解锁这些驱动器？(y/n): ").lower().strip()
-            if choice == 'y':
-                # 获取恢复密钥
-                recovery_key = input("请输入BitLocker恢复密钥: ").strip()
-                if recovery_key:
-                    try:
-                        unlock_results = self.detector.unlock_all_locked_drives(recovery_key)
-                        if unlock_results:
-                            print("\n解锁结果:")
-                            for drive, success in unlock_results.items():
-                                status = "✅ 成功" if success else "❌ 失败"
-                                print(f"  {drive}: {status}")
-                            
-                            # 检查是否所有驱动器都解锁成功
-                            all_unlocked = all(unlock_results.values())
-                            if all_unlocked:
-                                print("✅ 所有驱动器解锁成功")
-                                return True
-                            else:
-                                print("⚠️ 部分驱动器解锁失败，可能影响数据拷贝")
-                                confirm = input("是否继续？(y/n): ").lower().strip()
-                                return confirm == 'y'
+            choice = input("\n请选择操作 (1/2/3): ").strip()
+            
+            if choice == '1':
+                # 用户选择解锁驱动器
+                print("\n请输入BitLocker密码来解锁驱动器")
+                password = input("请输入BitLocker密码: ").strip()
+                
+                if not password:
+                    print("❌ 密码不能为空")
+                    continue
+                
+                print(f"\n正在尝试解锁 {len(locked_drives)} 个驱动器...")
+                
+                try:
+                    # 使用密码解锁所有锁定的驱动器
+                    unlock_results = {}
+                    for drive in locked_drives:
+                        print(f"\n正在解锁驱动器 {drive}...")
+                        success = self.detector.bitlocker_manager._unlock_with_password(drive, password)
+                        unlock_results[drive] = success
+                        if success:
+                            print(f"✅ {drive} 解锁成功")
                         else:
-                            print("❌ 解锁操作失败")
-                            return False
-                    except Exception as e:
-                        print(f"❌ 解锁过程中出错: {e}")
+                            print(f"❌ {drive} 解锁失败")
+                    
+                    if unlock_results:
+                        print("\n解锁结果汇总:")
+                        success_count = sum(unlock_results.values())
+                        for drive, success in unlock_results.items():
+                            status = "✅ 成功" if success else "❌ 失败"
+                            print(f"  {drive}: {status}")
+                        
+                        print(f"\n解锁完成：{success_count}/{len(locked_drives)} 个驱动器成功解锁")
+                        
+                        if success_count == len(locked_drives):
+                            print("✅ 所有BitLocker加密驱动器解锁成功")
+                            return True
+                        elif success_count > 0:
+                            print("⚠️ 部分驱动器解锁成功，可以继续使用")
+                            confirm = input("是否继续？(y/n): ").lower().strip()
+                            return confirm == 'y'
+                        else:
+                            print("❌ 所有驱动器解锁失败")
+                            retry = input("是否重试？(y/n): ").lower().strip()
+                            if retry == 'y':
+                                continue
+                            else:
+                                return False
+                    else:
+                        print("❌ 解锁操作失败")
                         return False
+                        
+                except Exception as e:
+                    print(f"❌ 解锁过程中出错: {e}")
+                    retry = input("是否重试？(y/n): ").lower().strip()
+                    if retry == 'y':
+                        continue
+                    else:
+                        return False
+                        
+            elif choice == '2':
+                # 用户选择跳过加密驱动器
+                print("⚠️ 您选择跳过加密驱动器")
+                print("注意：跳过加密驱动器意味着无法访问其中的数据")
+                confirm = input("确认跳过？(y/n): ").lower().strip()
+                if confirm == 'y':
+                    print("✅ 已跳过加密驱动器，继续使用其他可用驱动器")
+                    return True
                 else:
-                    print("❌ 未输入恢复密钥")
-                    return False
-            elif choice == 'n':
-                print("❌ 无法解锁驱动器，无法进行数据拷贝")
+                    continue
+                    
+            elif choice == '3':
+                # 用户选择退出
+                print("❌ 用户选择退出程序")
                 return False
+                
             else:
-                print("请输入 y 或 n")
+                print("❌ 无效选择，请输入 1、2 或 3")
     
     def execute_copy_plan(self) -> bool:
         """执行拷贝计划"""
@@ -437,56 +626,302 @@ class InteractiveDataCopyTool:
         print("开始执行数据拷贝计划:")
         print("="*60)
         
+        # 选择拷贝性能模式
+        print("\n请选择拷贝性能模式:")
+        print("1. 标准模式 - 单线程拷贝，稳定可靠")
+        print("2. 高性能模式 - 多线程并行拷贝，速度更快")
+        print("3. 自定义模式 - 手动设置线程数和缓冲区大小")
+        
+        while True:
+            mode_choice = input("\n请选择模式 (1/2/3): ").strip()
+            if mode_choice in ['1', '2', '3']:
+                break
+            else:
+                print("请输入1、2或3")
+        
+        # 根据模式设置拷贝参数
+        if mode_choice == '1':
+            # 标准模式
+            max_workers = 1
+            chunk_size = 8192  # 8KB
+            buffer_size = 8192
+            print("✅ 已选择标准模式")
+        elif mode_choice == '2':
+            # 高性能模式
+            import multiprocessing
+            cpu_count = multiprocessing.cpu_count()
+            if cpu_count >= 8:
+                max_workers = 6
+            elif cpu_count >= 4:
+                max_workers = 4
+            else:
+                max_workers = 2
+            chunk_size = 32768  # 32KB
+            buffer_size = 32768
+            print(f"✅ 已选择高性能模式 - {max_workers}线程并行拷贝")
+        else:
+            # 自定义模式
+            import multiprocessing
+            cpu_count = multiprocessing.cpu_count()
+            print(f"当前系统CPU核心数: {cpu_count}")
+            
+            while True:
+                try:
+                    max_workers = int(input(f"请输入线程数 (1-{cpu_count*2}): ").strip())
+                    if 1 <= max_workers <= cpu_count * 2:
+                        break
+                    else:
+                        print(f"请输入1到{cpu_count*2}之间的数字")
+                except ValueError:
+                    print("请输入有效的数字")
+            
+            while True:
+                try:
+                    chunk_size = int(input("请输入缓冲区大小(KB): ").strip())
+                    chunk_size *= 1024  # 转换为字节
+                    if chunk_size >= 1024:
+                        break
+                    else:
+                        print("请输入至少1KB的缓冲区大小")
+                except ValueError:
+                    print("请输入有效的数字")
+            
+            buffer_size = chunk_size
+            print(f"✅ 已选择自定义模式 - {max_workers}线程，{chunk_size//1024}KB缓冲区")
+        
         try:
+            # 第一步：优先创建backup基础目录结构（如果选择backup操作）
+            if self.copy_plan['qdrive_to_backup'] or self.copy_plan['vector_to_backup']:
+                print(f"\n📁 第一步：优先创建backup基础目录结构...")
+                
+                # 创建QdriveDataHandler实例（如果需要进行backup操作）
+                qdrive_handler = None
+                if self.copy_plan['qdrive_to_backup'] and self.qdrive_drives and self.backup_drive:
+                    print("🔄 创建Qdrive数据backup目录结构...")
+                    qdrive_handler = QdriveDataHandler()
+                    if not qdrive_handler.create_backup_directory_structure(self.backup_drive, self.qdrive_drives):
+                        print(f"❌ 创建Backup盘目录结构失败")
+                        return False
+                    print("✅ Qdrive backup目录结构创建完成")
+                
+                # 如果选择Vector数据拷贝到backup盘，也需要预先创建logs目录
+                if self.copy_plan['vector_to_backup'] and self.vector_drive and self.backup_drive:
+                    print("🔄 创建Vector数据backup目录结构...")
+                    try:
+                        # 如果Qdrive backup目录结构已创建，使用相同的根目录
+                        if qdrive_handler and qdrive_handler.backup_root_dir:
+                            vector_target_dir = os.path.join(qdrive_handler.backup_root_dir, "logs")
+                        else:
+                            # 如果没有Qdrive backup目录，在backup盘根目录创建logs文件夹
+                            vector_target_dir = os.path.join(self.backup_drive, "logs")
+                        
+                        # 确保logs目录存在
+                        os.makedirs(vector_target_dir, exist_ok=True)
+                        print(f"✅ Vector backup目录结构创建完成: {vector_target_dir}")
+                    except Exception as e:
+                        print(f"❌ 创建Vector backup目录结构失败: {e}")
+                        return False
+                
+                print("✅ Backup盘基础目录结构创建完成")
+            else:
+                print(f"\n📁 第一步：无需创建backup目录结构（未选择backup操作）")
+            
+            # 第二步：并行执行所有拷贝任务
+            print(f"\n📁 第二步：开始并行数据拷贝（backup目录结构已准备就绪）...")
+            
+            import threading
+            import time
+            
+            # 存储所有拷贝任务的结果
+            copy_results = {}
+            copy_threads = []
+            
             # 1. Qdrive数据 → Transfer盘
             if self.copy_plan['qdrive_to_transfer'] and self.qdrive_drives and self.transfer_drive:
-                print(f"\n📁 拷贝Qdrive数据到Transfer盘...")
+                print(f"启动Qdrive到Transfer盘拷贝任务...")
                 for qdrive_drive in self.qdrive_drives:
-                    success = self.detector.copy_qdrive_data_to_transfer(qdrive_drive, self.transfer_drive)
-                    if success:
-                        print(f"✅ {qdrive_drive} → {self.transfer_drive} 拷贝成功")
-                    else:
-                        print(f"❌ {qdrive_drive} → {self.transfer_drive} 拷贝失败")
+                    def copy_qdrive_to_transfer(drive=qdrive_drive):
+                        try:
+                            success = self.detector.copy_qdrive_data_to_transfer(drive, self.transfer_drive)
+                            copy_results[f"qdrive_{drive}_to_transfer"] = success
+                            if success:
+                                pass
+                            else:
+                                print(f"❌ {drive} → {self.transfer_drive} 拷贝失败")
+                        except Exception as e:
+                            copy_results[f"qdrive_{drive}_to_transfer"] = False
+                            print(f"❌ {drive} → {self.transfer_drive} 拷贝出错: {e}")
+                    
+                    thread = threading.Thread(target=copy_qdrive_to_transfer)
+                    copy_threads.append(thread)
+                    thread.start()
             
             # 2. Vector数据 → Transfer盘
             if self.copy_plan['vector_to_transfer'] and self.vector_drive and self.transfer_drive:
-                print(f"\n📁 拷贝Vector数据到Transfer盘...")
-                success = self.detector.copy_vector_data_to_transfer(self.vector_drive, self.transfer_drive)
-                if success:
-                    print(f"✅ {self.vector_drive} → {self.transfer_drive} 拷贝成功")
-                else:
-                    print(f"❌ {self.vector_drive} → {self.transfer_drive} 拷贝失败")
+                print(f"启动Vector到Transfer盘拷贝任务...")
+                def copy_vector_to_transfer():
+                    try:
+                        success = self.detector.copy_vector_data_to_transfer(self.vector_drive, self.transfer_drive)
+                        copy_results["vector_to_transfer"] = success
+                        if success:
+                            pass
+                        else:
+                            print(f"❌ {self.vector_drive} → {self.transfer_drive} 拷贝失败")
+                    except Exception as e:
+                        copy_results["vector_to_transfer"] = False
+                        print(f"❌ {self.vector_drive} → {self.transfer_drive} 拷贝出错: {e}")
+                
+                thread = threading.Thread(target=copy_vector_to_transfer)
+                copy_threads.append(thread)
+                thread.start()
             
             # 3. Vector数据 → Backup盘
             if self.copy_plan['vector_to_backup'] and self.vector_drive and self.backup_drive:
-                print(f"\n📁 拷贝Vector数据到Backup盘...")
-                success = self.detector.copy_vector_data_to_backup(self.vector_drive, self.backup_drive)
-                if success:
-                    print(f"✅ {self.vector_drive} → {self.backup_drive} 拷贝成功")
-                else:
-                    print(f"❌ {self.vector_drive} → {self.backup_drive} 拷贝失败")
-            
-            # 4. Qdrive数据 → Backup盘（需要重新组织目录结构）
-            if self.copy_plan['qdrive_to_backup'] and self.qdrive_drives and self.backup_drive:
-                print(f"\n📁 拷贝Qdrive数据到Backup盘（重新组织目录结构）...")
-                
-                # 创建QdriveDataHandler实例
-                qdrive_handler = QdriveDataHandler()
-                
-                # 创建backup目录结构
-                if qdrive_handler.create_backup_directory_structure(self.backup_drive, self.qdrive_drives):
-                    # 拷贝数据到新结构
-                    for qdrive_drive in self.qdrive_drives:
-                        success = self.detector.copy_qdrive_data_to_backup(qdrive_drive, self.backup_drive, qdrive_handler)
-                        if success:
-                            print(f"✅ {qdrive_drive} → {self.backup_drive} 拷贝成功")
+                print(f"启动Vector到Backup盘拷贝任务...")
+                def copy_vector_to_backup():
+                    try:
+                        # 如果Qdrive backup目录结构已创建，使用相同的根目录
+                        if qdrive_handler and qdrive_handler.backup_root_dir:
+                            # 直接在根目录下创建logs文件夹
+                            vector_target_dir = os.path.join(qdrive_handler.backup_root_dir, "logs")
+                            success = self.detector.copy_vector_data_to_backup(self.vector_drive, vector_target_dir)
                         else:
-                            print(f"❌ {qdrive_drive} → {self.backup_drive} 拷贝失败")
-                else:
-                    print(f"❌ 创建Backup盘目录结构失败")
+                            # 如果没有Qdrive backup目录，使用默认的backup盘
+                            success = self.detector.copy_vector_data_to_backup(self.vector_drive, self.backup_drive)
+                        
+                        copy_results["vector_to_backup"] = success
+                        if success:
+                            pass
+                        else:
+                            print(f"❌ Vector数据拷贝失败")
+                    except Exception as e:
+                        copy_results["vector_to_backup"] = False
+                        print(f"❌ Vector数据拷贝出错: {e}")
+                
+                thread = threading.Thread(target=copy_vector_to_backup)
+                copy_threads.append(thread)
+                thread.start()
             
-            print("\n✅ 数据拷贝计划执行完成")
-            return True
+            # 4. Qdrive数据 → Backup盘
+            if self.copy_plan['qdrive_to_backup'] and self.qdrive_drives and self.backup_drive and qdrive_handler:
+                print(f"启动Qdrive到Backup盘拷贝任务...")
+                for qdrive_drive in self.qdrive_drives:
+                    drive_number = self.qdrive_number_mapping.get(qdrive_drive, 'Unknown')
+                    def copy_qdrive_to_backup(drive=qdrive_drive, number=drive_number):
+                        try:
+                            success = self.detector.copy_qdrive_data_to_backup(drive, self.backup_drive, qdrive_handler, number)
+                            copy_results[f"qdrive_{number}_to_backup"] = success
+                            if success:
+                                pass
+                            else:
+                                print(f"❌ Qdrive盘 {number} ({drive}) → {self.backup_drive} 拷贝失败")
+                        except Exception as e:
+                            copy_results[f"qdrive_{number}_to_backup"] = False
+                            print(f"❌ Qdrive盘 {number} ({drive}) → {self.backup_drive} 拷贝出错: {e}")
+                    
+                    thread = threading.Thread(target=copy_qdrive_to_backup)
+                    copy_threads.append(thread)
+                    thread.start()
+            
+            # 等待所有拷贝任务完成，并实时显示进度
+            print(f"\n等待所有拷贝任务完成...")
+            
+            # 创建进度监控
+            import time
+            start_time = time.time()
+            completed_tasks = 0
+            total_threads = len(copy_threads)
+            
+            # 记录已完成的线程索引
+            completed_thread_indices = set()
+            
+            # 实时进度监控循环
+            while completed_tasks < total_threads:
+                # 检查已完成的线程
+                for i, thread in enumerate(copy_threads):
+                    if i not in completed_thread_indices and not thread.is_alive():
+                        completed_thread_indices.add(i)
+                        completed_tasks += 1
+                
+                # 计算进度和预估时间
+                progress = (completed_tasks / total_threads) * 100
+                elapsed_time = time.time() - start_time
+                
+                # 格式化时间显示
+                def format_time(seconds):
+                    if seconds < 60:
+                        return f"{seconds:.1f}秒"
+                    elif seconds < 3600:
+                        minutes = seconds / 60
+                        return f"{minutes:.1f}分钟"
+                    else:
+                        hours = seconds / 3600
+                        return f"{hours:.1f}小时"
+                
+                # 清屏并显示进度
+                os.system('cls' if os.name == 'nt' else 'clear')
+                
+                print("="*60)
+                print("数据拷贝进度监控")
+                print("="*60)
+                print(f"总任务数: {total_threads}")
+                print(f"已完成: {completed_tasks}")
+                print(f"进行中: {total_threads - completed_tasks}")
+                print(f"进度: {progress:.1f}%")
+                print(f"已用时间: {format_time(elapsed_time)}")
+                
+                if completed_tasks > 0:
+                    avg_time_per_task = elapsed_time / completed_tasks
+                    remaining_tasks = total_threads - completed_tasks
+                    estimated_remaining = avg_time_per_task * remaining_tasks
+                    print(f"预估剩余时间: {format_time(estimated_remaining)}")
+                else:
+                    print("预估剩余时间: 计算中...")
+                
+                print("="*60)
+                
+                # 显示进度条
+                bar_length = 40
+                filled_length = int(bar_length * progress / 100)
+                bar = '█' * filled_length + '░' * (bar_length - filled_length)
+                print(f"[{bar}] {progress:.1f}%")
+                
+                if completed_tasks < total_threads:
+                    print("\n正在等待任务完成...")
+                    time.sleep(1)  # 每秒更新一次
+                
+                # 如果所有任务都完成了，跳出循环
+                if completed_tasks >= total_threads:
+                    break
+            
+            # 最终等待所有线程完成
+            for thread in copy_threads:
+                thread.join()
+            
+            # 统计拷贝结果
+            total_tasks = len(copy_results)
+            successful_tasks = sum(1 for success in copy_results.values() if success)
+            failed_tasks = total_tasks - successful_tasks
+            
+            if failed_tasks == 0:
+                return True
+            else:
+                print(f"\n⚠️ 有 {failed_tasks} 个任务失败，详细失败信息如下:")
+                print("="*60)
+                
+                # 显示每个任务的详细状态
+                for task_name, success in copy_results.items():
+                    status_icon = "✅" if success else "❌"
+                    status_text = "成功" if success else "失败"
+                    print(f"{status_icon} {task_name}: {status_text}")
+                
+                print("="*60)
+                print("💡 建议：")
+                print("   1. 检查失败任务对应的源盘和目标盘")
+                print("   2. 确认磁盘空间是否充足")
+                print("   3. 检查文件权限和是否被占用")
+                print("   4. 可以单独重新运行失败的任务")
+                return False
             
         except Exception as e:
             print(f"❌ 执行拷贝计划时出错: {e}")
@@ -500,7 +935,12 @@ class InteractiveDataCopyTool:
         print("="*60)
         
         print(f"操作系统: {self.detector.os_type}")
-        print(f"Qdrive盘: {self.qdrive_drives}")
+        print("Qdrive盘:")
+        if hasattr(self, 'qdrive_number_mapping') and self.qdrive_number_mapping:
+            for drive, number in self.qdrive_number_mapping.items():
+                print(f"  {number}: {drive}")
+        else:
+            print(f"  {self.qdrive_drives}")
         print(f"Vector盘: {self.vector_drive}")
         print(f"Transfer盘: {self.transfer_drive}")
         print(f"Backup盘: {self.backup_drive}")

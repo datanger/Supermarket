@@ -47,7 +47,7 @@ class DriveDetector:
     
     def detect_all_drives(self) -> List[str]:
         """
-        检测系统中所有可用的驱动器 - 优化版本，不扫描内容
+        检测系统中所有可用的驱动器 - 包括加密驱动器
         
         Returns:
             List[str]: 驱动器路径列表
@@ -56,10 +56,17 @@ class DriveDetector:
             drives = []
             
             if self.os_type == "windows":
-                # Windows系统：检测盘符，使用更安全的方法
+                # Windows系统：检测所有盘符，包括加密的
                 for partition in psutil.disk_partitions():
-                    if partition.device and self._is_drive_accessible(partition.device):
-                        drives.append(partition.device)
+                    if partition.device:
+                        # 检查驱动器是否存在（包括加密的）
+                        if os.path.exists(partition.device):
+                            drives.append(partition.device)
+                            logger.debug(f"检测到驱动器: {partition.device}")
+                        else:
+                            # 即使路径不存在，也尝试添加（可能是加密驱动器）
+                            logger.debug(f"检测到可能加密的驱动器: {partition.device} (路径不存在)")
+                            drives.append(partition.device)
             else:
                 # Linux/macOS系统：检测挂载点
                 for partition in psutil.disk_partitions():
@@ -76,7 +83,7 @@ class DriveDetector:
     
     def _is_drive_accessible(self, drive_path: str) -> bool:
         """
-        检查驱动器是否可访问 - 避免权限错误
+        检查驱动器是否可访问 - 包括加密驱动器
         
         Args:
             drive_path: 驱动器路径
@@ -85,23 +92,34 @@ class DriveDetector:
             bool: 是否可访问
         """
         try:
-            # 只检查路径是否存在，不尝试访问内容
+            # 检查路径是否存在（包括加密的驱动器）
             if not os.path.exists(drive_path):
                 return False
             
             # 尝试获取基本信息，不扫描内容
             if self.os_type == "windows":
-                # Windows: 只检查盘符是否可访问
-                return True
+                # Windows: 检查盘符是否可访问，包括加密的
+                try:
+                    # 尝试访问驱动器根目录
+                    os.listdir(drive_path)
+                    return True
+                except (PermissionError, OSError) as e:
+                    # 权限错误可能是加密驱动器，仍然认为可访问
+                    logger.debug(f"驱动器 {drive_path} 访问受限，可能是加密驱动器: {e}")
+                    return True
+                except Exception as e:
+                    logger.debug(f"驱动器 {drive_path} 访问检查失败: {e}")
+                    return False
             else:
                 # Linux/macOS: 检查挂载点是否可访问
                 return os.access(drive_path, os.R_OK)
                 
-        except (PermissionError, OSError):
-            # 权限错误或系统错误，记录但不中断
-            logger.debug(f"驱动器 {drive_path} 访问受限，但继续检测")
-            return True  # 仍然返回True，让后续处理决定
-        except Exception:
+        except (PermissionError, OSError) as e:
+            # 权限错误可能是加密驱动器，仍然认为可访问
+            logger.debug(f"驱动器 {drive_path} 访问受限，可能是加密驱动器: {e}")
+            return True
+        except Exception as e:
+            logger.debug(f"驱动器 {drive_path} 访问检查失败: {e}")
             return False
     
     def get_system_drives(self) -> List[str]:
@@ -357,7 +375,7 @@ class DriveDetector:
     
     def get_drive_information(self) -> Dict[str, Dict]:
         """
-        获取所有驱动器的基本信息 - 优化版本，不扫描内容
+        获取所有驱动器的基本信息 - 包括加密驱动器
         
         Returns:
             Dict[str, Dict]: 驱动器信息字典
@@ -366,15 +384,24 @@ class DriveDetector:
         
         for drive in self.drives:
             try:
-                # 获取磁盘使用情况（如果可访问）
+                # 检查驱动器是否可访问
+                is_accessible = False
                 try:
-                    usage = psutil.disk_usage(drive)
-                    total = usage.total
-                    used = usage.used
-                    free = usage.free
+                    os.listdir(drive)
+                    is_accessible = True
                 except (PermissionError, OSError):
-                    # 权限错误，可能是加密盘，使用默认值
-                    total = used = free = 0
+                    is_accessible = False
+                
+                # 获取磁盘使用情况（如果可访问）
+                total = used = free = 0
+                if is_accessible:
+                    try:
+                        usage = psutil.disk_usage(drive)
+                        total = usage.total
+                        used = usage.used
+                        free = usage.free
+                    except (PermissionError, OSError):
+                        pass
                 
                 # 获取文件系统信息
                 fs_type = "Unknown"
@@ -390,12 +417,105 @@ class DriveDetector:
                 # 获取卷标信息（快速获取）
                 volume_name = self._get_volume_name(drive)
                 
+                # 判断是否是加密驱动器
+                is_encrypted = False
+                if not is_accessible:
+                    is_encrypted = True
+                elif fs_type == "Unknown" and not is_accessible:
+                    is_encrypted = True
+                
+                # 进一步检查是否是BitLocker加密盘
+                if is_encrypted and self.os_type == "windows":
+                    try:
+                        # 尝试使用manage-bde命令检查BitLocker状态
+                        import subprocess
+                        drive_letter = drive.rstrip('\\')
+                        result = subprocess.run(
+                            ["manage-bde", "-status", drive_letter],
+                            capture_output=True,
+                            text=True,
+                            timeout=5
+                        )
+                        if result.returncode == 0:
+                            output = result.stdout
+                            if "Lock Status:" in output:
+                                is_encrypted = True
+                                logger.debug(f"驱动器 {drive} 被识别为BitLocker加密盘")
+                    except Exception as e:
+                        logger.debug(f"检查驱动器 {drive} 的BitLocker状态时出错: {e}")
+                        # 即使检查失败，仍然标记为加密盘
+                        is_encrypted = True
+                
+                # 获取BitLocker状态（如果可用）
+                bitlocker_status = "Unknown"
+                if is_encrypted and self.os_type == "windows":
+                    try:
+                        import subprocess
+                        drive_letter = drive.rstrip('\\')
+                        result = subprocess.run(
+                            ["manage-bde", "-status", drive_letter],
+                            capture_output=True,
+                            text=True,
+                            timeout=5
+                        )
+                        if result.returncode == 0:
+                            output = result.stdout
+                            # 查找锁定状态（支持中英文）
+                            import re
+                            
+                            # 优先尝试匹配中文状态（因为系统是中文）
+                            match = re.search(r'锁定状态:\s+(.*)', output)
+                            if match:
+                                status_text = match.group(1).strip()
+                                if "已锁定" in status_text:
+                                    bitlocker_status = "Locked"
+                                elif "已解锁" in status_text:
+                                    bitlocker_status = "Unlocked"
+                                else:
+                                    bitlocker_status = "Unknown"
+                            else:
+                                # 尝试匹配英文状态
+                                match = re.search(r'Lock Status:\s+(.*)', output)
+                                if match:
+                                    status_text = match.group(1).strip()
+                                    if "Locked" in status_text:
+                                        bitlocker_status = "Locked"
+                                    elif "Unlocked" in status_text:
+                                        bitlocker_status = "Unlocked"
+                                    else:
+                                        bitlocker_status = "Unknown"
+                                else:
+                                    # 如果没有找到明确的状态，检查其他指标
+                                    if "BitLocker" in output:
+                                        # 检查是否包含锁定相关关键词
+                                        if any(keyword in output for keyword in ["已锁定", "Locked", "锁定"]):
+                                            bitlocker_status = "Locked"
+                                        elif any(keyword in output for keyword in ["已解锁", "Unlocked", "解锁"]):
+                                            bitlocker_status = "Unlocked"
+                                        else:
+                                            # 有BitLocker但状态不明，默认认为已锁定
+                                            bitlocker_status = "Locked"
+                                    else:
+                                        # 如果驱动器被识别为加密但manage-bde命令没有返回BitLocker信息
+                                        # 可能是因为驱动器被锁定，默认认为已锁定
+                                        bitlocker_status = "Locked"
+                        else:
+                            # 命令失败，但驱动器被识别为加密，默认认为已锁定
+                            bitlocker_status = "Locked"
+                    except Exception as e:
+                        logger.debug(f"获取驱动器 {drive} 的BitLocker状态时出错: {e}")
+                        # 出错时，如果驱动器被识别为加密，默认认为已锁定
+                        bitlocker_status = "Locked"
+                
                 drive_info[drive] = {
                     'total': total,
                     'used': used,
                     'free': free,
                     'volume_name': volume_name,
                     'fs_type': fs_type,
+                    'is_accessible': is_accessible,
+                    'is_encrypted': is_encrypted,
+                    'bitlocker_status': bitlocker_status,
                     'is_system': drive in self.system_drives,
                     'is_source': drive in self.source_drives,
                     'is_destination': drive in self.destination_drives
@@ -409,24 +529,58 @@ class DriveDetector:
         return drive_info
     
     def _get_volume_name(self, drive: str) -> str:
-        """获取驱动器卷标 - 优化版本，不扫描内容"""
+        """获取驱动器卷标 - 多种方法尝试"""
         try:
             if self.os_type == "windows":
-                # Windows系统：尝试获取卷标，但不扫描内容
+                # 方法1: 尝试使用win32api
                 try:
                     import win32api
                     volume_name = win32api.GetVolumeInformation(drive)[0]
-                    return volume_name if volume_name else os.path.basename(drive) or drive
+                    if volume_name:
+                        return volume_name
                 except ImportError:
-                    return os.path.basename(drive) or drive
+                    pass
                 except (PermissionError, OSError):
-                    # 权限错误，可能是加密盘
-                    return os.path.basename(drive) or drive
+                    pass
+                
+                # 方法2: 尝试使用subprocess调用Windows命令
+                try:
+                    import subprocess
+                    result = subprocess.run(['wmic', 'logicaldisk', 'where', f'DeviceID="{drive[:-1]}"', 'get', 'VolumeName', '/value'], 
+                                         capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0:
+                        for line in result.stdout.split('\n'):
+                            if line.startswith('VolumeName='):
+                                volume_name = line.split('=', 1)[1].strip()
+                                if volume_name:
+                                    return volume_name
+                except Exception:
+                    pass
+                
+                # 方法3: 尝试使用psutil获取标签
+                try:
+                    for partition in psutil.disk_partitions():
+                        if partition.device == drive and hasattr(partition, 'label') and partition.label:
+                            return partition.label
+                except Exception:
+                    pass
+                
+                # 方法4: 尝试读取驱动器属性文件
+                try:
+                    label_file = os.path.join(drive, 'System Volume Information', 'WPSettings.dat')
+                    if os.path.exists(label_file):
+                        # 这是一个简化的方法，实际可能需要更复杂的解析
+                        return "System"
+                except Exception:
+                    pass
+                
+                # 方法5: 使用盘符作为备选
+                return f"Drive_{drive[:-1]}"
             else:
                 # Linux/macOS系统：使用路径名
                 return os.path.basename(drive) or drive
         except Exception:
-            return drive
+            return f"Drive_{drive[:-1]}" if drive.endswith('\\') else drive
     
     def identify_data_drives(self) -> Tuple[List[str], List[str], List[str], List[str]]:
         """

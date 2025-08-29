@@ -12,13 +12,22 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Tuple
 
 # 导入子模块
-from drivers.drive_detector import DriveDetector
-from drivers.bitlocker_manager import BitlockerManager
-from data_copy.vector_data_handler import VectorDataHandler
-from data_copy.qdrive_data_handler import QdriveDataHandler
-from utils.file_utils import get_directory_stats, format_size, generate_directory_tree, copy_directory_with_rename
-from utils.progress_bar import create_progress_bar, update_progress, close_progress
-from logging_utils.copy_logger import log_copy_operation
+try:
+    from drivers.drive_detector import DriveDetector
+    from drivers.bitlocker_manager import BitlockerManager
+    from data_copy.vector_data_handler import VectorDataHandler
+    from data_copy.qdrive_data_handler import QdriveDataHandler
+    from utils.file_utils import get_directory_stats, format_size, generate_directory_tree, copy_directory_with_rename
+    from utils.progress_bar import create_progress_bar, update_progress, close_progress
+    from logging_utils.copy_logger import log_copy_operation, log_source_drives_before_copy, log_target_drives_before_copy, log_copy_verification_summary, log_single_copy_verification
+except ImportError:
+    from data_copy_modules.drivers.drive_detector import DriveDetector
+    from data_copy_modules.drivers.bitlocker_manager import BitlockerManager
+    from data_copy_modules.data_copy.vector_data_handler import VectorDataHandler
+    from data_copy_modules.data_copy.qdrive_data_handler import QdriveDataHandler
+    from data_copy_modules.utils.file_utils import get_directory_stats, format_size, generate_directory_tree, copy_directory_with_rename
+    from data_copy_modules.utils.progress_bar import create_progress_bar, update_progress, close_progress
+    from data_copy_modules.logging_utils.copy_logger import log_copy_operation, log_source_drives_before_copy, log_target_drives_before_copy, log_copy_verification_summary, log_single_copy_verification
 
 logger = logging.getLogger(__name__)
 
@@ -33,46 +42,67 @@ class CrossPlatformSystemDetector:
         self.vector_handler = VectorDataHandler()
         self.qdrive_handler = QdriveDataHandler()
         
-        # 从驱动器检测器获取属性
-        self.drives = self.drive_detector.drives
-        self.system_drives = self.drive_detector.system_drives
-        self.source_drives = self.drive_detector.source_drives
-        self.destination_drives = self.drive_detector.destination_drives
-        self.drive_info = self.drive_detector.drive_info
+        # 获取操作系统类型
         self.os_type = self.drive_detector.os_type
         
-        # 数据拷贝相关属性
-        self.qdrive_drives = self.drive_detector.qdrive_drives
-        self.vector_drives = self.drive_detector.vector_drives
-        self.transfer_drives = self.drive_detector.transfer_drives
-        self.backup_drives = self.drive_detector.backup_drives
+        # 初始化其他属性（延迟初始化）
+        self.drives = []
+        self.system_drives = []
+        self.source_drives = []
+        self.destination_drives = []
+        self.drive_info = {}
+        self.qdrive_drives = []
+        self.vector_drives = []
+        self.transfer_drives = []
+        self.backup_drives = []
         
         logger.info(f"检测到操作系统: {self.os_type}")
     
     def detect_all_drives(self) -> List[str]:
         """检测系统中所有可用的驱动器"""
-        return self.drive_detector.detect_all_drives()
+        self.drives = self.drive_detector.detect_all_drives()
+        return self.drives
     
     def get_system_drives(self) -> List[str]:
         """获取系统驱动器列表"""
-        return self.drive_detector.get_system_drives()
+        self.system_drives = self.drive_detector.get_system_drives()
+        return self.system_drives
     
     def classify_drives(self) -> Tuple[List[str], List[str]]:
         """将驱动器分类为源数据盘和目标备份盘"""
-        return self.drive_detector.classify_drives()
+        source_drives, destination_drives = self.drive_detector.classify_drives()
+        self.source_drives = source_drives
+        self.destination_drives = destination_drives
+        return source_drives, destination_drives
     
     def get_drive_information(self) -> Dict[str, Dict]:
         """获取所有驱动器的详细信息"""
-        drive_info = self.drive_detector.get_drive_information()
+        self.drive_info = self.drive_detector.get_drive_information()
         
         # 添加BitLocker状态信息
         if self.os_type == "windows":
-            for drive in drive_info:
-                if 'error' not in drive_info[drive]:
-                    drive_info[drive]['bitlocker_status'] = self.bitlocker_manager.check_bitlocker_status(drive)
+            for drive in self.drive_info:
+                if 'error' not in self.drive_info[drive]:
+                    try:
+                        self.drive_info[drive]['bitlocker_status'] = self.bitlocker_manager.check_bitlocker_status(drive)
+                    except Exception as e:
+                        logger.warning(f"无法获取驱动器 {drive} 的BitLocker状态: {e}")
+                        self.drive_info[drive]['bitlocker_status'] = "Unknown"
         
-        self.drive_info = drive_info
-        return drive_info
+        # 记录源驱动器和目标驱动器的信息到日志
+        try:
+            source_drives = self.source_drives if hasattr(self, 'source_drives') else []
+            transfer_drives = self.transfer_drives if hasattr(self, 'transfer_drives') else []
+            backup_drives = self.backup_drives if hasattr(self, 'backup_drives') else []
+            
+            if source_drives:
+                log_source_drives_before_copy(source_drives, self.drive_info)
+            if transfer_drives or backup_drives:
+                log_target_drives_before_copy(transfer_drives, backup_drives, self.drive_info)
+        except Exception as e:
+            logger.warning(f"记录驱动器信息到日志时出错: {e}")
+        
+        return self.drive_info
     
     def unlock_all_locked_drives(self, recovery_key: str) -> Dict[str, bool]:
         """解锁所有被BitLocker锁定的驱动器（仅Windows）"""
@@ -80,7 +110,23 @@ class CrossPlatformSystemDetector:
     
     def identify_data_drives(self) -> Tuple[List[str], List[str], List[str], List[str]]:
         """识别Qdrive、Vector、transfer和backup驱动器"""
-        return self.drive_detector.identify_data_drives()
+        qdrive_drives, vector_drives, transfer_drives, backup_drives = self.drive_detector.identify_data_drives()
+        self.qdrive_drives = qdrive_drives
+        self.vector_drives = vector_drives
+        self.transfer_drives = transfer_drives
+        self.backup_drives = backup_drives
+        # 记录数据驱动器分类信息到日志
+        try:
+            # 合并所有源驱动器
+            source_drives = qdrive_drives + vector_drives
+            if source_drives:
+                log_source_drives_before_copy(source_drives, self.drive_info)
+            if transfer_drives or backup_drives:
+                log_target_drives_before_copy(transfer_drives, backup_drives, self.drive_info)
+        except Exception as e:
+            logger.warning(f"记录数据驱动器分类信息到日志时出错: {e}")
+        
+        return qdrive_drives, vector_drives, transfer_drives, backup_drives
     
     def check_vector_data_dates(self, vector_drive: str) -> Tuple[bool, List[str]]:
         """检查Vector数据盘中的日期数量"""
@@ -136,20 +182,21 @@ class CrossPlatformSystemDetector:
                 # 记录拷贝完成统计
                 log_copy_operation(f"Qdrive data has been copied to {transfer_drive}, with data size: {str(target_stats['total_size'])} bytes, and file number is {str(target_stats['file_count'])};")
                 
-                # 验证拷贝结果
-                if source_stats['file_count'] == target_stats['file_count']:
-                    logger.info(f"✅ 文件数量验证成功: {source_stats['file_count']} = {target_stats['file_count']}")
-                else:
-                    logger.warning(f"⚠️ 文件数量不匹配: 源 {source_stats['file_count']} ≠ 目标 {target_stats['file_count']}")
+                # 记录拷贝校验信息
+                try:
+                    log_single_copy_verification(qdrive_drive, transfer_drive, source_stats, target_stats, 'Qdrive_Transfer')
+                except Exception as e:
+                    logger.warning(f"记录拷贝校验信息时出错: {e}")
                 
-                if abs(source_stats['total_size'] - target_stats['total_size']) < 1024:  # 允许1KB的误差
-                    logger.info(f"✅ 文件大小验证成功: {format_size(source_stats['total_size'])} ≈ {format_size(target_stats['total_size'])}")
-                    log_copy_operation(f"Qdrive data has been copied successfully;")
-                else:
-                    logger.warning(f"⚠️ 文件大小不匹配: 源 {format_size(source_stats['total_size'])} ≠ 目标 {format_size(target_stats['total_size'])}")
-            
-            close_progress(progress_bar)
-            return success
+                # 记录拷贝成功
+                log_copy_operation(f"Qdrive data has been copied successfully;")
+                
+                close_progress(progress_bar)
+                return True
+            else:
+                logger.error(f"拷贝目录失败")
+                close_progress(progress_bar)
+                return False
             
         except Exception as e:
             logger.error(f"拷贝Qdrive数据到transfer盘时出错: {e}")
@@ -236,7 +283,7 @@ class CrossPlatformSystemDetector:
             logger.error(f"拷贝Vector数据到transfer盘时出错: {e}")
             return False
     
-    def copy_vector_data_to_backup(self, vector_drive: str, backup_drive: str) -> bool:
+    def copy_vector_data_to_backup(self, vector_drive: str, backup_drive: str, target_dir: str = None) -> bool:
         """将Vector数据拷贝到backup盘（保持原始结构）"""
         try:
             logs_path = os.path.join(vector_drive, 'logs')
@@ -249,7 +296,14 @@ class CrossPlatformSystemDetector:
             source_stats = get_directory_stats(logs_path)
             logger.info(f"源目录统计: {source_stats['file_count']} 个文件, 总大小: {format_size(source_stats['total_size'])}")
             
-            target_logs_path = os.path.join(backup_drive, 'logs')
+            # 如果指定了目标目录，使用指定的目录；否则使用默认的logs目录
+            if target_dir:
+                target_logs_path = target_dir
+                logger.info(f"使用指定的目标目录: {target_logs_path}")
+            else:
+                target_logs_path = os.path.join(backup_drive, 'logs')
+                logger.info(f"使用默认目标目录: {target_logs_path}")
+            
             os.makedirs(target_logs_path, exist_ok=True)
             
             # 创建进度条
@@ -283,7 +337,7 @@ class CrossPlatformSystemDetector:
             logger.error(f"拷贝Vector数据到backup盘时出错: {e}")
             return False
     
-    def copy_qdrive_data_to_backup(self, qdrive_drive: str, backup_drive: str, qdrive_handler=None) -> bool:
+    def copy_qdrive_data_to_backup(self, qdrive_drive: str, backup_drive: str, qdrive_handler=None, drive_number=None) -> bool:
         """将Qdrive数据拷贝到backup盘（按新目录结构）"""
         try:
             data_path = os.path.join(qdrive_drive, 'data')
@@ -315,22 +369,22 @@ class CrossPlatformSystemDetector:
                 root_path = os.path.join(backup_drive, root_dir)
                 logger.info(f"使用检测到的根目录: {root_path}")
             
-            # 从驱动器路径中提取盘号
-            drive_number = None
-            if '201' in qdrive_drive:
-                drive_number = '201'
-            elif '203' in qdrive_drive:
-                drive_number = '203'
-            elif '230' in qdrive_drive:
-                drive_number = '230'
-            elif '231' in qdrive_drive:
-                drive_number = '231'
-            else:
-                # 尝试从路径中提取数字
-                import re
-                match = re.search(r'(\d{3})', qdrive_drive)
-                if match:
-                    drive_number = match.group(1)
+            # 优先使用传入的盘号，如果没有则从驱动器路径中提取
+            if not drive_number:
+                if '201' in qdrive_drive:
+                    drive_number = '201'
+                elif '203' in qdrive_drive:
+                    drive_number = '203'
+                elif '230' in qdrive_drive:
+                    drive_number = '230'
+                elif '231' in qdrive_drive:
+                    drive_number = '231'
+                else:
+                    # 尝试从路径中提取数字
+                    import re
+                    match = re.search(r'(\d{3})', qdrive_drive)
+                    if match:
+                        drive_number = match.group(1)
             
             if not drive_number:
                 logger.error(f"无法从驱动器路径 {qdrive_drive} 中提取盘号")
@@ -347,17 +401,50 @@ class CrossPlatformSystemDetector:
                 logger.error(f"在根目录 {os.path.basename(root_path)} 中未找到包含盘号 {drive_number} 的二级目录")
                 return False
             
-            target_path = os.path.join(root_path, target_subdir)
+            # 在二级目录下创建data文件夹
+            target_data_path = os.path.join(root_path, target_subdir, 'data')
+            os.makedirs(target_data_path, exist_ok=True)
             
             # 创建进度条
             progress_bar = create_progress_bar(source_stats['file_count'], f"拷贝Qdrive数据到Backup盘({drive_number})")
             
-            # 使用自动重命名功能拷贝目录
-            success = copy_directory_with_rename(data_path, target_path, lambda x: update_progress(progress_bar, x))
+            # 遍历源data目录，跳过2qd_3NRV1_v1这一级，直接拷贝时间目录
+            success = True
+            copied_files = 0
+            
+            try:
+                # 遍历源data目录下的车型目录（如2qd_3NRV1_v1）
+                for vehicle_dir in os.listdir(data_path):
+                    vehicle_path = os.path.join(data_path, vehicle_dir)
+                    if os.path.isdir(vehicle_path):
+                        # 遍历车型目录下的时间目录（如2025_08_21-13_53）
+                        for time_dir in os.listdir(vehicle_path):
+                            time_path = os.path.join(vehicle_path, time_dir)
+                            if os.path.isdir(time_path):
+                                # 直接拷贝时间目录到目标data目录
+                                target_time_path = os.path.join(target_data_path, time_dir)
+                                
+                                # 如果目标时间目录已存在，先删除
+                                if os.path.exists(target_time_path):
+                                    import shutil
+                                    shutil.rmtree(target_time_path)
+                                
+                                # 拷贝时间目录及其内容
+                                import shutil
+                                shutil.copytree(time_path, target_time_path)
+                                copied_files += 1
+                                logger.info(f"已拷贝时间目录: {time_dir}")
+                                
+                                # 更新进度条
+                                if progress_bar:
+                                    update_progress(progress_bar, 1)
+            except Exception as e:
+                logger.error(f"拷贝时间目录时出错: {e}")
+                success = False
             
             if success:
                 # 获取拷贝后的统计信息
-                target_stats = get_directory_stats(target_path)
+                target_stats = get_directory_stats(target_data_path)
                 logger.info(f"拷贝完成统计:")
                 logger.info(f"  源目录: {source_stats['file_count']} 个文件, {format_size(source_stats['total_size'])}")
                 logger.info(f"  目标目录: {target_stats['file_count']} 个文件, {format_size(target_stats['total_size'])}")
@@ -366,12 +453,20 @@ class CrossPlatformSystemDetector:
                 if source_stats['file_count'] == target_stats['file_count']:
                     logger.info(f"✅ 文件数量验证成功: {source_stats['file_count']} = {target_stats['file_count']}")
                 else:
-                    logger.warning(f"⚠️ 文件数量不匹配: 源 {source_stats['file_count']} ≠ 目标 {target_stats['file_count']}")
+                    logger.warning(f"⚠️ 文件数量验证: 源 {source_stats['file_count']} ≠ 目标 {target_stats['file_count']}")
                 
                 if abs(source_stats['total_size'] - target_stats['total_size']) < 1024:  # 允许1KB的误差
                     logger.info(f"✅ 文件大小验证成功: {format_size(source_stats['total_size'])} ≈ {format_size(target_stats['total_size'])}")
                 else:
-                    logger.warning(f"⚠️ 文件大小不匹配: 源 {format_size(source_stats['total_size'])} ≠ 目标 {format_size(target_stats['total_size'])}")
+                    logger.warning(f"⚠️ 文件大小验证: 源 {format_size(source_stats['total_size'])} ≈ 目标 {format_size(target_stats['total_size'])}")
+                
+                # 记录拷贝校验信息
+                try:
+                    log_single_copy_verification(qdrive_drive, backup_drive, source_stats, target_stats, 'Qdrive_Backup')
+                except Exception as e:
+                    logger.warning(f"记录拷贝校验信息时出错: {e}")
+                
+                logger.info(f"✅ 成功拷贝 {copied_files} 个时间目录到 {target_data_path}")
             
             close_progress(progress_bar)
             return success
@@ -596,5 +691,12 @@ class CrossPlatformSystemDetector:
             else:
                 print(f"\n驱动器: {drive}")
                 print(f"  错误: {info['error']}")
+        
+        # 记录拷贝完成后的校验总结到日志
+        try:
+            source_drives = self.qdrive_drives + self.vector_drives
+            log_copy_verification_summary(source_drives, self.transfer_drives, self.backup_drives)
+        except Exception as e:
+            logger.warning(f"记录拷贝校验总结到日志时出错: {e}")
         
         print("\n" + "="*60) 

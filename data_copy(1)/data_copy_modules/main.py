@@ -6,19 +6,42 @@ Data Copy Tool Main Program
 """
 
 import logging
-from core import CrossPlatformSystemDetector
-from logging_utils import setup_copy_logger
+import os
+try:
+    from core.system_detector import CrossPlatformSystemDetector
+    from logging_utils.copy_logger import setup_copy_logger
+except ImportError:
+    from data_copy_modules.core.system_detector import CrossPlatformSystemDetector
+    from data_copy_modules.logging_utils.copy_logger import setup_copy_logger
 
 # 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('system_detector.log', encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+def setup_main_logger():
+    """设置主程序日志记录器"""
+    # 创建logs根目录
+    logs_root = "logs"
+    if not os.path.exists(logs_root):
+        os.makedirs(logs_root)
+    
+    # 创建以运行时间命名的二级目录
+    import datetime
+    run_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_subdir = os.path.join(logs_root, run_time)
+    if not os.path.exists(log_subdir):
+        os.makedirs(log_subdir)
+    
+    # 配置日志
+    system_log_file = os.path.join(log_subdir, "system_detector.log")
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(system_log_file, encoding='utf-8'),
+            logging.StreamHandler()
+        ]
+    )
+    return logging.getLogger(__name__)
+
+logger = setup_main_logger()
 
 def main():
     """主函数 - 演示跨平台系统检测和数据拷贝功能"""

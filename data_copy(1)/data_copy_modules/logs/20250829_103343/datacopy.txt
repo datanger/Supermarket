@@ -1,0 +1,16 @@
+2025-08-29 10:34:15: The source path of Qdrive are: F:\, The size of Qdrive to be copied is: 3323079270 bytes, and file number is 12;
+2025-08-29 10:34:15: The source path of Qdrive are: J:\, The size of Qdrive to be copied is: 4430772360 bytes, and file number is 16;
+2025-08-29 10:34:15: The source path of Qdrive are: G:\, The size of Qdrive to be copied is: 80442 bytes, and file number is 12;
+2025-08-29 10:34:15: Qdrive data started to copy to K:\;
+2025-08-29 10:34:15: Qdrive data started to copy to K:\;
+2025-08-29 10:34:15: The source path of Qdrive are: I:\, The size of Qdrive to be copied is: 161446 bytes, and file number is 26;
+2025-08-29 10:34:15: Qdrive data started to copy to K:\;
+2025-08-29 10:34:15: Qdrive data started to copy to K:\;
+2025-08-29 10:34:16: Qdrive data has been copied to K:\, with data size: 42124116 bytes, and file number is 31;
+2025-08-29 10:34:16: Qdrive data has been copied successfully;
+2025-08-29 10:34:17: Qdrive data has been copied to K:\, with data size: 131313888 bytes, and file number is 40;
+2025-08-29 10:34:17: Qdrive data has been copied successfully;
+2025-08-29 10:35:23: Qdrive data has been copied to K:\, with data size: 6687294892 bytes, and file number is 63;
+2025-08-29 10:35:23: Qdrive data has been copied successfully;
+2025-08-29 10:35:28: Qdrive data has been copied to K:\, with data size: 7754093518 bytes, and file number is 66;
+2025-08-29 10:35:28: Qdrive data has been copied successfully;
