@@ -582,64 +582,314 @@ class DriveDetector:
         except Exception:
             return f"Drive_{drive[:-1]}" if drive.endswith('\\') else drive
     
-    def identify_data_drives(self) -> Tuple[List[str], List[str], List[str], List[str]]:
+    def _has_camera_fc_mp4_files(self, drive: str) -> bool:
         """
-        识别Qdrive、Vector、transfer和backup驱动器
+        Check if drive contains camera_fc*.mp4 files (indicates 201 drive)
         
+        Args:
+            drive: Drive path
+            
+        Returns:
+            bool: True if contains camera_fc*.mp4 files
+        """
+        try:
+            if not os.access(drive, os.R_OK):
+                return False
+            
+            # Search for camera_fc*.mp4 files in the drive
+            for root, dirs, files in os.walk(drive):
+                for file in files:
+                    if file.startswith('camera_fc') and file.endswith('.mp4'):
+                        logger.debug(f"Found camera_fc*.mp4 file: {os.path.join(root, file)}")
+                        return True
+                # Limit search depth to avoid long scans
+                if len(root.split(os.sep)) - len(drive.split(os.sep)) > 3:
+                    dirs.clear()
+            
+            return False
+        except Exception as e:
+            logger.debug(f"Error checking camera_fc*.mp4 files in {drive}: {e}")
+            return False
+    
+    def _has_camera_rc_mp4_files(self, drive: str) -> bool:
+        """
+        Check if drive contains camera_rc*.mp4 files (indicates 203 drive)
+        
+        Args:
+            drive: Drive path
+            
+        Returns:
+            bool: True if contains camera_rc*.mp4 files
+        """
+        try:
+            if not os.access(drive, os.R_OK):
+                return False
+            
+            # Search for camera_rc*.mp4 files in the drive
+            for root, dirs, files in os.walk(drive):
+                for file in files:
+                    if file.startswith('camera_rc') and file.endswith('.mp4'):
+                        logger.debug(f"Found camera_rc*.mp4 file: {os.path.join(root, file)}")
+                        return True
+                # Limit search depth to avoid long scans
+                if len(root.split(os.sep)) - len(drive.split(os.sep)) > 3:
+                    dirs.clear()
+            
+            return False
+        except Exception as e:
+            logger.debug(f"Error checking camera_rc*.mp4 files in {drive}: {e}")
+            return False
+    
+    def _has_data_lidar_top_folder(self, drive: str) -> bool:
+        """
+        Check if drive contains data_lidar_top folder (indicates 230 drive)
+        
+        Args:
+            drive: Drive path
+            
+        Returns:
+            bool: True if contains data_lidar_top folder
+        """
+        try:
+            if not os.access(drive, os.R_OK):
+                return False
+            
+            # Search for data_lidar_top folder
+            for root, dirs, files in os.walk(drive):
+                if 'data_lidar_top' in dirs:
+                    logger.debug(f"Found data_lidar_top folder: {os.path.join(root, 'data_lidar_top')}")
+                    return True
+                # Limit search depth to avoid long scans
+                if len(root.split(os.sep)) - len(drive.split(os.sep)) > 3:
+                    dirs.clear()
+            
+            return False
+        except Exception as e:
+            logger.debug(f"Error checking data_lidar_top folder in {drive}: {e}")
+            return False
+    
+    def _has_data_lidar_front_folder(self, drive: str) -> bool:
+        """
+        Check if drive contains data_lidar_front folder (indicates 231 drive)
+        
+        Args:
+            drive: Drive path
+            
+        Returns:
+            bool: True if contains data_lidar_front folder
+        """
+        try:
+            if not os.access(drive, os.R_OK):
+                return False
+            
+            # Search for data_lidar_front folder
+            for root, dirs, files in os.walk(drive):
+                if 'data_lidar_front' in dirs:
+                    logger.debug(f"Found data_lidar_front folder: {os.path.join(root, 'data_lidar_front')}")
+                    return True
+                # Limit search depth to avoid long scans
+                if len(root.split(os.sep)) - len(drive.split(os.sep)) > 3:
+                    dirs.clear()
+            
+            return False
+        except Exception as e:
+            logger.debug(f"Error checking data_lidar_front folder in {drive}: {e}")
+            return False
+    
+    def _has_logs_folder(self, drive: str) -> bool:
+        """
+        Check if drive contains Logs or logs folder (indicates Vector drive)
+        
+        Args:
+            drive: Drive path
+            
+        Returns:
+            bool: True if contains Logs or logs folder
+        """
+        try:
+            if not os.access(drive, os.R_OK):
+                return False
+            
+            # Check for Logs or logs folder in root directory
+            entries = os.listdir(drive)
+            if 'Logs' in entries or 'logs' in entries:
+                logger.debug(f"Found Logs/logs folder in {drive}")
+                return True
+            
+            return False
+        except Exception as e:
+            logger.debug(f"Error checking Logs/logs folder in {drive}: {e}")
+            return False
+    
+    def _is_echo_backup_drive(self, drive: str) -> bool:
+        """
+        Check if drive is Echo backup drive (Echo*backup)
+        
+        Args:
+            drive: Drive path
+            
+        Returns:
+            bool: True if is Echo backup drive
+        """
+        try:
+            volume_name = self._get_volume_name(drive).lower()
+            return volume_name.startswith('echo') and volume_name.endswith('backup')
+        except Exception as e:
+            logger.debug(f"Error checking Echo backup drive {drive}: {e}")
+            return False
+    
+    def _is_echo_transfer_drive(self, drive: str) -> bool:
+        """
+        Check if drive is Echo transfer drive (Echo* but not ending with backup)
+        
+        Args:
+            drive: Drive path
+            
+        Returns:
+            bool: True if is Echo transfer drive
+        """
+        try:
+            volume_name = self._get_volume_name(drive).lower()
+            return volume_name.startswith('echo') and not volume_name.endswith('backup')
+        except Exception as e:
+            logger.debug(f"Error checking Echo transfer drive {drive}: {e}")
+            return False
+
+    def identify_data_drives(self, require_confirmation: bool = True) -> Tuple[List[str], List[str], List[str], List[str]]:
+        """
+        Automatically identify Qdrive (201, 203, 230, 231), Vector, transfer and backup drives
+        
+        Args:
+            require_confirmation: Whether to require user confirmation
+            
         Returns:
             Tuple[List[str], List[str], List[str], List[str]]: (qdrive_drives, vector_drives, transfer_drives, backup_drives)
         """
+        # Perform automatic identification
+        qdrive_drives, vector_drives, transfer_drives, backup_drives = self._perform_automatic_identification()
+        
+        # If confirmation is required, show results and get user confirmation
+        if require_confirmation:
+            return self._get_user_confirmation(qdrive_drives, vector_drives, transfer_drives, backup_drives)
+        else:
+            return qdrive_drives, vector_drives, transfer_drives, backup_drives
+    
+    def _perform_automatic_identification(self) -> Tuple[List[str], List[str], List[str], List[str]]:
+        """Perform automatic drive identification"""
         available_drives = self.exclude_system_drives()
         
-        qdrive_drives = []
+        qdrive_201_drives = []
+        qdrive_203_drives = []
+        qdrive_230_drives = []
+        qdrive_231_drives = []
         vector_drives = []
         transfer_drives = []
         backup_drives = []
         
         for drive in available_drives:
             try:
-                # 检查是否为Qdrive数据盘（包含data文件夹）
-                if os.path.exists(os.path.join(drive, 'data')):
-                    qdrive_drives.append(drive)
-                    logger.info(f"识别到Qdrive数据盘: {drive}")
+                logger.info(f"Analyzing drive: {drive}")
+                
+                # 1. Check for camera_fc*.mp4 files (201 drive)
+                if self._has_camera_fc_mp4_files(drive):
+                    qdrive_201_drives.append(drive)
+                    logger.info(f"Identified Qdrive 201: {drive} (contains camera_fc*.mp4 files)")
                     continue
                 
-                # 检查是否为Vector数据盘（包含logs文件夹）
-                if os.path.exists(os.path.join(drive, 'logs')):
+                # 2. Check for camera_rc*.mp4 files (203 drive)
+                if self._has_camera_rc_mp4_files(drive):
+                    qdrive_203_drives.append(drive)
+                    logger.info(f"Identified Qdrive 203: {drive} (contains camera_rc*.mp4 files)")
+                    continue
+                
+                # 3. Check for data_lidar_top folder (230 drive)
+                if self._has_data_lidar_top_folder(drive):
+                    qdrive_230_drives.append(drive)
+                    logger.info(f"Identified Qdrive 230: {drive} (contains data_lidar_top folder)")
+                    continue
+                
+                # 4. Check for data_lidar_front folder (231 drive)
+                if self._has_data_lidar_front_folder(drive):
+                    qdrive_231_drives.append(drive)
+                    logger.info(f"Identified Qdrive 231: {drive} (contains data_lidar_front folder)")
+                    continue
+                
+                # 5. Check for Logs or logs folder (Vector drive)
+                if self._has_logs_folder(drive):
                     vector_drives.append(drive)
-                    logger.info(f"识别到Vector数据盘: {drive}")
+                    logger.info(f"Identified Vector drive: {drive} (contains Logs/logs folder)")
                     continue
                 
-                # 检查是否为transfer盘（卷标包含transfer或几乎为空）
-                volume_name = self._get_volume_name(drive).lower()
-                if 'transfer' in volume_name or self._is_disk_almost_empty(drive):
-                    transfer_drives.append(drive)
-                    logger.info(f"识别到transfer目标盘: {drive}")
-                    continue
-                
-                # 检查是否为backup盘（卷标包含backup）
-                if 'backup' in volume_name:
+                # 6. Check for Echo backup drive (Echo*backup)
+                if self._is_echo_backup_drive(drive):
                     backup_drives.append(drive)
-                    logger.info(f"识别到backup目标盘: {drive}")
+                    logger.info(f"Identified Echo backup drive: {drive}")
                     continue
                 
-                # 如果无法确定，默认作为backup盘
+                # 7. Check for Echo transfer drive (Echo* but not ending with backup)
+                if self._is_echo_transfer_drive(drive):
+                    transfer_drives.append(drive)
+                    logger.info(f"Identified Echo transfer drive: {drive}")
+                    continue
+                
+                # If cannot be identified, default to backup drive
                 backup_drives.append(drive)
-                logger.info(f"未识别驱动器类型，默认作为backup盘: {drive}")
+                logger.info(f"Unidentified drive, defaulting to backup: {drive}")
                 
             except Exception as e:
-                logger.error(f"识别驱动器 {drive} 类型时出错: {e}")
+                logger.error(f"Error identifying drive {drive}: {e}")
                 continue
+        
+        # Combine all Qdrive drives
+        qdrive_drives = qdrive_201_drives + qdrive_203_drives + qdrive_230_drives + qdrive_231_drives
         
         self.qdrive_drives = qdrive_drives
         self.vector_drives = vector_drives
         self.transfer_drives = transfer_drives
         self.backup_drives = backup_drives
         
-        logger.info(f"驱动器识别完成:")
-        logger.info(f"  Qdrive数据盘: {qdrive_drives}")
-        logger.info(f"  Vector数据盘: {vector_drives}")
-        logger.info(f"  Transfer目标盘: {transfer_drives}")
-        logger.info(f"  Backup目标盘: {backup_drives}")
+        logger.info(f"Drive identification completed:")
+        logger.info(f"  Qdrive 201 drives: {qdrive_201_drives}")
+        logger.info(f"  Qdrive 203 drives: {qdrive_203_drives}")
+        logger.info(f"  Qdrive 230 drives: {qdrive_230_drives}")
+        logger.info(f"  Qdrive 231 drives: {qdrive_231_drives}")
+        logger.info(f"  Vector drives: {vector_drives}")
+        logger.info(f"  Transfer drives: {transfer_drives}")
+        logger.info(f"  Backup drives: {backup_drives}")
         
-        return qdrive_drives, vector_drives, transfer_drives, backup_drives 
+        return qdrive_drives, vector_drives, transfer_drives, backup_drives
+    
+    def _get_user_confirmation(self, qdrive_drives: List[str], vector_drives: List[str], 
+                             transfer_drives: List[str], backup_drives: List[str]) -> Tuple[List[str], List[str], List[str], List[str]]:
+        """Get user confirmation for drive identification results"""
+        try:
+            # Import confirmation interface
+            from utils.confirmation_interface import ConfirmationInterface
+            from utils.directory_tree_analyzer import DirectoryTreeAnalyzer
+            
+            # Create analyzer and confirmation interface
+            analyzer = DirectoryTreeAnalyzer(max_depth=3, max_items_per_level=5)
+            confirmation_ui = ConfirmationInterface()
+            
+            # Display results and get user confirmation
+            choice = confirmation_ui.display_identification_results(
+                qdrive_drives, vector_drives, transfer_drives, backup_drives, analyzer
+            )
+            
+            # Handle user choice
+            should_continue, new_qdrive, new_vector, new_transfer, new_backup = confirmation_ui.handle_user_confirmation(choice, self)
+            
+            if should_continue:
+                return qdrive_drives, vector_drives, transfer_drives, backup_drives
+            else:
+                # Recursive call for re-identification
+                return self.identify_data_drives(require_confirmation=True)
+                
+        except ImportError as e:
+            logger.warning(f"Confirmation interface not available: {e}")
+            logger.info("Proceeding without user confirmation...")
+            return qdrive_drives, vector_drives, transfer_drives, backup_drives
+        except Exception as e:
+            logger.error(f"Error in user confirmation: {e}")
+            logger.info("Proceeding without user confirmation...")
+            return qdrive_drives, vector_drives, transfer_drives, backup_drives 

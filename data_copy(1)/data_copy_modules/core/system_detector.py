@@ -136,71 +136,92 @@ class CrossPlatformSystemDetector:
         """从车号中提取车型"""
         return self.qdrive_handler.extract_vehicle_model(vehicle_id)
     
+    def _extract_qdrive_number(self, qdrive_drive: str) -> str:
+        """Extract Qdrive number (201, 203, 230, 231) from drive path"""
+        import re
+        if '201' in qdrive_drive:
+            return '201'
+        elif '203' in qdrive_drive:
+            return '203'
+        elif '230' in qdrive_drive:
+            return '230'
+        elif '231' in qdrive_drive:
+            return '231'
+        else:
+            # Try to extract 3-digit number from path
+            match = re.search(r'(\d{3})', qdrive_drive)
+            if match:
+                return match.group(1)
+            return 'Unknown'
+    
     def create_backup_directory_structure(self, backup_drive: str, qdrive_drives: List[str]) -> bool:
         """在backup盘创建Qdrive数据的目录结构"""
         return self.qdrive_handler.create_backup_directory_structure(backup_drive, qdrive_drives)
     
     def copy_qdrive_data_to_transfer(self, qdrive_drive: str, transfer_drive: str) -> bool:
-        """将Qdrive数据拷贝到transfer盘（保持原始结构）"""
+        """Copy Qdrive data to transfer drive (maintain original structure)"""
         try:
             data_path = os.path.join(qdrive_drive, 'data')
             if not os.path.exists(data_path):
-                logger.error(f"Qdrive数据盘 {qdrive_drive} 中未找到data文件夹")
+                logger.error(f"Qdrive data drive {qdrive_drive} does not contain data folder")
                 return False
             
-            # 获取拷贝前的统计信息
-            logger.info(f"正在统计源目录 {data_path} 的文件信息...")
+            # Get pre-copy statistics
+            logger.info(f"Analyzing source directory {data_path}...")
             source_stats = get_directory_stats(data_path)
-            logger.info(f"源目录统计: {source_stats['file_count']} 个文件, 总大小: {format_size(source_stats['total_size'])}")
+            logger.info(f"Source directory stats: {source_stats['file_count']} files, total size: {format_size(source_stats['total_size'])}")
             
-            # 记录源数据信息到日志
-            log_copy_operation(f"The source path of Qdrive are: {os.path.dirname(data_path)}, The size of Qdrive to be copied is: {str(source_stats['total_size'])} bytes, and file number is {str(source_stats['file_count'])};")
+            # Extract drive number from Qdrive path
+            drive_number = self._extract_qdrive_number(qdrive_drive)
             
-            # 生成并记录目录树
+            # Record source data information to log
+            log_copy_operation(f"The source path of Qdrive {drive_number} is: {os.path.dirname(data_path)}, The size of Qdrive {drive_number} to be copied is: {str(source_stats['total_size'])} bytes, and file number is {str(source_stats['file_count'])};")
+            
+            # Generate and record directory tree
             tree_str = generate_directory_tree(data_path)
             log_copy_operation(tree_str, 'filelist')
             
             target_data_path = os.path.join(transfer_drive, 'data')
             os.makedirs(target_data_path, exist_ok=True)
             
-            # 记录拷贝开始
-            log_copy_operation(f"Qdrive data started to copy to {transfer_drive};")
+            # Record copy start
+            log_copy_operation(f"Qdrive {drive_number} data started to copy to {transfer_drive};")
             
-            # 创建进度条
-            progress_bar = create_progress_bar(source_stats['file_count'], f"拷贝Qdrive数据到Transfer盘")
+            # Create progress bar
+            progress_bar = create_progress_bar(source_stats['file_count'], f"Copying Qdrive data to Transfer drive")
             
-            # 使用自动重命名功能拷贝目录
+            # Copy directory with auto-rename functionality
             success = copy_directory_with_rename(data_path, target_data_path, lambda x: update_progress(progress_bar, x))
             
             if success:
-                # 获取拷贝后的统计信息
+                # Get post-copy statistics
                 target_stats = get_directory_stats(target_data_path)
-                logger.info(f"拷贝完成统计:")
-                logger.info(f"  源目录: {source_stats['file_count']} 个文件, {format_size(source_stats['total_size'])}")
-                logger.info(f"  目标目录: {target_stats['file_count']} 个文件, {format_size(target_stats['total_size'])}")
+                logger.info(f"Copy operation completed:")
+                logger.info(f"  Source directory: {source_stats['file_count']} files, {format_size(source_stats['total_size'])}")
+                logger.info(f"  Target directory: {target_stats['file_count']} files, {format_size(target_stats['total_size'])}")
                 
-                # 记录拷贝完成统计
-                log_copy_operation(f"Qdrive data has been copied to {transfer_drive}, with data size: {str(target_stats['total_size'])} bytes, and file number is {str(target_stats['file_count'])};")
+                # Record copy completion statistics
+                log_copy_operation(f"Qdrive {drive_number} data has been copied to {transfer_drive}, with data size: {str(target_stats['total_size'])} bytes, and file number is {str(target_stats['file_count'])};")
                 
-                # 记录拷贝校验信息
+                # Record copy verification information
                 try:
                     log_single_copy_verification(qdrive_drive, transfer_drive, source_stats, target_stats, 'Qdrive_Transfer')
                 except Exception as e:
-                    logger.warning(f"记录拷贝校验信息时出错: {e}")
+                    logger.warning(f"Error recording copy verification information: {e}")
                 
-                # 记录拷贝成功
-                log_copy_operation(f"Qdrive data has been copied successfully;")
+                # Record copy success
+                log_copy_operation(f"Qdrive {drive_number} data has been copied successfully;")
                 
                 close_progress(progress_bar)
                 return True
             else:
-                logger.error(f"拷贝目录失败")
+                logger.error(f"Failed to copy directory")
                 close_progress(progress_bar)
                 return False
             
         except Exception as e:
-            logger.error(f"拷贝Qdrive数据到transfer盘时出错: {e}")
-            log_copy_operation(f"Error copying Qdrive data: {e}")
+            logger.error(f"Error copying Qdrive data to transfer drive: {e}")
+            log_copy_operation(f"Error copying Qdrive {drive_number} data: {e}", is_error=True)
             return False
     
     def _copy_directory_with_progress(self, src: str, dst: str, progress_bar) -> bool:
@@ -284,57 +305,58 @@ class CrossPlatformSystemDetector:
             return False
     
     def copy_vector_data_to_backup(self, vector_drive: str, backup_drive: str, target_dir: str = None) -> bool:
-        """将Vector数据拷贝到backup盘（保持原始结构）"""
+        """Copy Vector data to backup drive (maintain original structure)"""
         try:
             logs_path = os.path.join(vector_drive, 'logs')
             if not os.path.exists(logs_path):
-                logger.error(f"Vector数据盘 {vector_drive} 中未找到logs文件夹")
+                logger.error(f"Vector data drive {vector_drive} does not contain logs folder")
                 return False
             
-            # 获取拷贝前的统计信息
-            logger.info(f"正在统计源目录 {logs_path} 的文件信息...")
+            # Get source directory statistics
+            logger.info(f"Analyzing source directory {logs_path}...")
             source_stats = get_directory_stats(logs_path)
-            logger.info(f"源目录统计: {source_stats['file_count']} 个文件, 总大小: {format_size(source_stats['total_size'])}")
+            logger.info(f"Source directory stats: {source_stats['file_count']} files, total size: {format_size(source_stats['total_size'])}")
             
-            # 如果指定了目标目录，使用指定的目录；否则使用默认的logs目录
+            # If target directory is specified, use it; otherwise copy directly to backup drive root
             if target_dir:
                 target_logs_path = target_dir
-                logger.info(f"使用指定的目标目录: {target_logs_path}")
+                logger.info(f"Using specified target directory: {target_logs_path}")
             else:
-                target_logs_path = os.path.join(backup_drive, 'logs')
-                logger.info(f"使用默认目标目录: {target_logs_path}")
+                # Fix: Copy directly to backup drive root instead of creating logs subdirectory
+                target_logs_path = backup_drive
+                logger.info(f"Using backup drive root as target: {target_logs_path}")
             
             os.makedirs(target_logs_path, exist_ok=True)
             
-            # 创建进度条
-            progress_bar = create_progress_bar(source_stats['file_count'], f"拷贝Vector数据到Backup盘")
+            # Create progress bar
+            progress_bar = create_progress_bar(source_stats['file_count'], f"Copying Vector data to Backup drive")
             
-            # 使用自动重命名功能拷贝目录
+            # Copy directory with auto-rename functionality
             success = copy_directory_with_rename(logs_path, target_logs_path, lambda x: update_progress(progress_bar, x))
             
             if success:
-                # 获取拷贝后的统计信息
+                # Get post-copy statistics
                 target_stats = get_directory_stats(target_logs_path)
-                logger.info(f"拷贝完成统计:")
-                logger.info(f"  源目录: {source_stats['file_count']} 个文件, {format_size(source_stats['total_size'])}")
-                logger.info(f"  目标目录: {target_stats['file_count']} 个文件, {format_size(target_stats['total_size'])}")
+                logger.info(f"Copy operation completed:")
+                logger.info(f"  Source directory: {source_stats['file_count']} files, {format_size(source_stats['total_size'])}")
+                logger.info(f"  Target directory: {target_stats['file_count']} files, {format_size(target_stats['total_size'])}")
                 
-                # 验证拷贝结果
+                # Verify copy results
                 if source_stats['file_count'] == target_stats['file_count']:
-                    logger.info(f"✅ 文件数量验证成功: {source_stats['file_count']} = {target_stats['file_count']}")
+                    logger.info(f"✅ File count verification successful: {source_stats['file_count']} = {target_stats['file_count']}")
                 else:
-                    logger.warning(f"⚠️ 文件数量不匹配: 源 {source_stats['file_count']} ≠ 目标 {target_stats['file_count']}")
+                    logger.warning(f"⚠️ File count mismatch: source {source_stats['file_count']} ≠ target {target_stats['file_count']}")
                 
-                if abs(source_stats['total_size'] - target_stats['total_size']) < 1024:  # 允许1KB的误差
-                    logger.info(f"✅ 文件大小验证成功: {format_size(source_stats['total_size'])} ≈ {format_size(target_stats['total_size'])}")
+                if abs(source_stats['total_size'] - target_stats['total_size']) < 1024:  # Allow 1KB tolerance
+                    logger.info(f"✅ File size verification successful: {format_size(source_stats['total_size'])} ≈ {format_size(target_stats['total_size'])}")
                 else:
-                    logger.warning(f"⚠️ 文件大小不匹配: 源 {format_size(source_stats['total_size'])} ≠ 目标 {format_size(target_stats['total_size'])}")
+                    logger.warning(f"⚠️ File size mismatch: source {format_size(source_stats['total_size'])} ≠ target {format_size(target_stats['total_size'])}")
             
             close_progress(progress_bar)
             return success
             
         except Exception as e:
-            logger.error(f"拷贝Vector数据到backup盘时出错: {e}")
+            logger.error(f"Error copying Vector data to backup drive: {e}")
             return False
     
     def copy_qdrive_data_to_backup(self, qdrive_drive: str, backup_drive: str, qdrive_handler=None, drive_number=None) -> bool:

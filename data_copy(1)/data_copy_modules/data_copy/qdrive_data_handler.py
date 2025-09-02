@@ -141,16 +141,16 @@ class QdriveDataHandler:
             root_dir_name = f"{main_date}-{main_vehicle_model}"
             root_dir_path = os.path.join(backup_drive, root_dir_name)
             
-            # 直接使用建议的根目录名称
-            print(f"使用根目录名称: {root_dir_name}")
+            # Use suggested root directory name directly
+            print(f"Using root directory name: {root_dir_name}")
             
-            # 用户选择A盘或B盘
+            # User selects A or B disk
             while True:
-                disk_choice = input("请选择A盘或B盘 (A/B): ").strip().upper()
+                disk_choice = input("Please select A or B disk (A/B): ").strip().upper()
                 if disk_choice in ['A', 'B']:
                     break
                 else:
-                    print("❌ 无效选择，请输入 A 或 B")
+                    print("❌ Invalid selection, please enter A or B")
             
             # 创建根目录
             os.makedirs(root_dir_path, exist_ok=True)

@@ -23,18 +23,18 @@ def setup_copy_logger():
     """设置拷贝操作日志记录器"""
     global copy_logger, COPY_LOG_FILE, FILELIST_LOG_FILE, LOG_DIR
     
-    # 创建logs根目录
+    # Create logs root directory
     logs_root = "logs"
     if not os.path.exists(logs_root):
         os.makedirs(logs_root)
-        print(f"✅ 创建日志根目录: {logs_root}")
+        print(f"✅ Created log root directory: {logs_root}")
     
-    # 创建以运行时间命名的二级目录
+    # Create subdirectory named with run time
     run_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     log_subdir = os.path.join(logs_root, run_time)
     if not os.path.exists(log_subdir):
         os.makedirs(log_subdir)
-        print(f"✅ 创建日志子目录: {log_subdir}")
+        print(f"✅ Created log subdirectory: {log_subdir}")
     
     LOG_DIR = log_subdir
     
@@ -62,30 +62,42 @@ def setup_copy_logger():
     COPY_LOG_FILE = copy_log_file
     FILELIST_LOG_FILE = filelist_log_file
     
-    print(f"📁 日志文件路径:")
-    print(f"   拷贝日志: {copy_log_file}")
-    print(f"   文件列表: {filelist_log_file}")
+    print(f"📁 Log file paths:")
+    print(f"   Copy log: {copy_log_file}")
+    print(f"   File list: {filelist_log_file}")
     
     return copy_log_file, filelist_log_file
 
-def log_copy_operation(message: str, log_type: str = 'copy'):
+def log_copy_operation(message: str, log_type: str = 'copy', is_error: bool = False):
     """
-    记录拷贝操作日志
+    Record copy operation logs
     
     Args:
-        message: 日志消息
-        log_type: 日志类型 ('copy' 或 'filelist')
+        message: Log message
+        log_type: Log type ('copy' or 'filelist')
+        is_error: Whether this is an error message (for red color display)
     """
     try:
+        # Replace "copied" with "backup" when copying to backup drives
+        if 'backup' in message.lower() and 'copied' in message.lower():
+            message = message.replace('copied', 'backup')
+        
         if log_type == 'copy' and COPY_LOG_FILE:
             with open(COPY_LOG_FILE, 'a', encoding='utf-8') as f:
                 timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                f.write(f"{timestamp}: {message}\n")
+                if is_error:
+                    # Add red color formatting for errors (ANSI escape codes)
+                    f.write(f"{timestamp}: \033[91m{message}\033[0m\n")
+                else:
+                    f.write(f"{timestamp}: {message}\n")
         elif log_type == 'filelist' and FILELIST_LOG_FILE:
             with open(FILELIST_LOG_FILE, 'a', encoding='utf-8') as f:
-                f.write(f"{message}\n")
+                if is_error:
+                    f.write(f"\033[91m{message}\033[0m\n")
+                else:
+                    f.write(f"{message}\n")
     except Exception as e:
-        print(f"写入日志文件时出错: {e}")
+        print(f"Error writing to log file: {e}")
 
 def log_source_drives_before_copy(source_drives: list, drive_info: dict):
     """

@@ -95,35 +95,35 @@ class BitlockerManager:
                          if info.get('bitlocker_status') == 'Locked']
         
         if not locked_drives:
-            print("没有发现被BitLocker锁定的驱动器")
+            print("No BitLocker locked drives found")
             return {}
         
-        print(f"\n发现 {len(locked_drives)} 个被BitLocker锁定的驱动器:")
+        print(f"\nFound {len(locked_drives)} BitLocker locked drives:")
         for i, drive in enumerate(locked_drives, 1):
             print(f"  {i}. {drive}")
         
-        # 提示输入密码
-        print(f"\n正在使用密码解锁所有驱动器...")
-        password = getpass.getpass("请输入BitLocker密码: ")
+        # Prompt for password input
+        print(f"\nUsing password to unlock all drives...")
+        password = getpass.getpass("Please enter BitLocker password: ")
         
         if not password:
-            print("密码不能为空，解锁取消")
+            print("Password cannot be empty, unlock cancelled")
             return {}
         
-        # 使用相同密码解锁所有驱动器
+        # Use same password to unlock all drives
         unlock_results = {}
         success_count = 0
         
         for i, drive in enumerate(locked_drives, 1):
-            print(f"\n[{i}/{len(locked_drives)}] 正在解锁驱动器 {drive}...")
+            print(f"\n[{i}/{len(locked_drives)}] Unlocking drive {drive}...")
             success = self._unlock_with_password(drive, password)
             unlock_results[drive] = success
             if success:
                 success_count += 1
-                # 更新状态
+                # Update status
                 drive_info[drive]['bitlocker_status'] = 'Unlocked'
         
-        print(f"\n解锁完成！成功解锁 {success_count}/{len(locked_drives)} 个驱动器")
+        print(f"\nUnlock completed! Successfully unlocked {success_count}/{len(locked_drives)} drives")
         return unlock_results
     
     def _unlock_with_password(self, drive: str, password: str) -> bool:
@@ -150,7 +150,7 @@ class BitlockerManager:
                 f"('{password}' | ConvertTo-SecureString -AsPlainText -Force)"
             ]
             
-            logger.info(f"正在使用密码解锁驱动器 {drive}...")
+            logger.info(f"Using password to unlock drive {drive}...")
             process = subprocess.Popen(
                 ps_command, 
                 stdout=subprocess.PIPE, 
@@ -161,21 +161,21 @@ class BitlockerManager:
             stdout, stderr = process.communicate(timeout=30)
             
             if process.returncode == 0:
-                logger.info(f"成功使用密码解锁驱动器 {drive}")
-                print(f"✓ 成功解锁驱动器 {drive}")
+                logger.info(f"Successfully unlocked drive {drive} with password")
+                print(f"✓ Successfully unlocked drive {drive}")
                 return True
             else:
-                logger.error(f"使用密码解锁驱动器 {drive} 失败: {stderr}")
-                print(f"✗ 解锁驱动器 {drive} 失败: {stderr}")
+                logger.error(f"Failed to unlock drive {drive} with password: {stderr}")
+                print(f"✗ Failed to unlock drive {drive}: {stderr}")
                 return False
                 
         except subprocess.TimeoutExpired:
-            logger.error(f"使用密码解锁驱动器 {drive} 超时")
-            print(f"✗ 解锁驱动器 {drive} 超时")
+            logger.error(f"Timeout while unlocking drive {drive} with password")
+            print(f"✗ Timeout while unlocking drive {drive}")
             return False
         except Exception as e:
-            logger.error(f"使用密码解锁驱动器 {drive} 时出错: {e}")
-            print(f"✗ 解锁驱动器 {drive} 时出错: {e}")
+            logger.error(f"Error while unlocking drive {drive} with password: {e}")
+            print(f"✗ Error while unlocking drive {drive}: {e}")
             return False
     
     def get_unlock_methods(self) -> list:
